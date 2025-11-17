@@ -1,4 +1,4 @@
-# Final BMS State-of-Health (SoH) Estimation Workflow Report
+# BMS State Estimation Workflow Report (SR-DUKF Architecture)
 
 **Date:** November 15, 2025  
 **Status:** Production-Ready  
@@ -26,11 +26,11 @@
 
 ## Executive Summary
 
-The BMS SoH estimation system is a **hybrid architecture** combining:
+The BMS state estimation system is a **hybrid architecture** combining:
 
-1. **Extended Kalman Filter (EKF)** - Real-time State-of-Charge estimation based on an equivalent circuit model
-2. **LSTM Neural Network** - Deep learning model predicting SoH and RUL from short time-series sequences
-3. **Metadata Integration** - Automatic parameter initialization from database
+1. **Square-Root Dual Unscented Kalman Filter (SR-DUKF)** - for robust and adaptive joint estimation of the battery's state (SoC) and parameters (capacity, resistance).
+2. **LSTM Neural Network** - providing a data-driven model of the battery's Open-Circuit Voltage (OCV).
+3. **Metadata Integration** - Automatic parameter initialization from a database.
 
 ### Key Metrics
 - **Training Dataset:** 2,000 discharge cycles from 34 batteries
@@ -62,8 +62,9 @@ The BMS SoH estimation system is a **hybrid architecture** combining:
                     └────────────┬────────────┘
                                  │
                     ┌────────────▼────────────┐
-                    │  EXTENDED KALMAN FILTER │
-                    │  (1st-order ECM)        │
+                    │  SQUARE-ROOT DUAL UKF   │
+                    │  (State & Parameter     │
+                    │  Estimation)            │
                     │  Output: SoC estimate   │
                     └────────────┬────────────┘
                                  │
@@ -71,7 +72,7 @@ The BMS SoH estimation system is a **hybrid architecture** combining:
         │                                                      │
         ▼                                                      ▼
    LSTM INPUT FEATURES (4D):                          SCALING & NORMALIZATION:
-   [Voltage, Current, Temperature, EKF_SoC]           Mean/Std from training data
+   [Voltage, Current, Temperature, UKF_SoC]           Mean/Std from training data
         │                                                      │
         └────────────────────────┬──────────────────────────────┘
                                  │
@@ -156,144 +157,46 @@ where $N$ = total discharge cycles for battery, threshold typically 0.8.
 
 ---
 
-## Extended Kalman Filter (EKF) Implementation
+## Square-Root Dual Unscented Kalman Filter (SR-DUKF) Implementation
 
-### 1. Equivalent Circuit Model (ECM / Thevenin)
+### 1. The Dual Filter Architecture
+The system uses a **Dual Unscented Kalman Filter** to simultaneously estimate the battery's state (which changes quickly) and its parameters (which change slowly).
 
-The battery is modeled as a first-order equivalent circuit:
+*   **State Filter (UKF):** Runs at a fast timescale (e.g., every second) to estimate the SoC. It uses the latest parameter estimates from the parameter filter.
+*   **Parameter Filter (UKF):** Runs at a slower timescale (e.g., every 100 seconds) to estimate key parameters like total capacity (`Q_max`) and internal resistance (`R_0`). It uses the latest SoC estimate from the state filter.
 
-```
-    ┌──────────────────────────────────────┐
-    │                                      │
-    │   V_terminal = OCV(SoC) - I·R0 - U_p │
-    │                                      │
-    │   where:                             │
-    │   - OCV(SoC): Open-circuit voltage   │
-    │   - R0: Series resistance (Ohm)      │
-    │   - U_p: Polarization voltage (V)    │
-    │                                      │
-    │   ┌─────────────┐                   │
-    │   │   OCV(SoC)  │                   │
-    │   └──────┬──────┘                   │
-    │          │                          │
-    │    ┌─────┴──────┐                   │
-    │    │    R0      │                   │
-    │    └─────┬──────┘                   │
-    │          │                          │
-    │  ┌───────┼───────┐                  │
-    │  │       │       │                  │
-    │  │      R_D     C_D                 │
-    │  │       │       │                  │
-    │  └───────┴───────┘                  │
-    │          │                          │
-    │   U_p (polarization voltage)         │
-    └──────────┬──────────────────────────┘
-               │
-            V_terminal
-```
+This dual structure allows the model to adapt to the battery's changing characteristics as it ages.
 
-**Terminal Voltage Model:**
+### 2. The Unscented Kalman Filter (UKF) vs. EKF
+The **Unscented Kalman Filter (UKF)** is a more advanced and accurate alternative to the EKF for non-linear systems.
 
-$$V_k = \text{OCV}(\text{SoC}_k) - I_k \cdot R_0 - U_{p,k} + v_k$$
+*   **EKF:** Linearizes the system model at each step using Jacobians. This can be inaccurate for highly non-linear systems like batteries.
+*   **UKF:** Uses a technique called the **Unscented Transform**. It selects a set of "sigma points" that capture the state's mean and covariance. These points are propagated through the *true non-linear model*, and a new mean and covariance are computed. This avoids linearization errors.
 
-where:
-- $\text{OCV}(\text{SoC}_k)$ = 3rd-order polynomial fitted from data
-- $I_k$ = current at time $k$ (A)
-- $R_0$ = ohmic resistance (Ohm)
-- $U_{p,k}$ = polarization voltage (V)
-- $v_k$ = measurement noise ~$\mathcal{N}(0, R)$
+### 3. The Unscented Transform
+The Unscented Transform is the core of the UKF. It works as follows:
+1.  **Generate Sigma Points:** A small, fixed number of sigma points are generated from the current state distribution (mean and covariance).
+2.  **Propagate Points:** These points are passed through the non-linear system model (the process and measurement equations).
+3.  **Calculate New Statistics:** The mean and covariance of the transformed points are calculated to get the new state estimate and its uncertainty.
 
-### 2. EKF State Vector
+This method provides a much more accurate estimation of the output distribution's mean and covariance compared to the EKF's linearization.
 
-State vector contains 2 variables:
+### 4. Square-Root Formulation (SR-UKF)
+Our implementation uses a **Square-Root** variant of the UKF.
+*   Instead of propagating the full covariance matrix `P`, it propagates its Cholesky factor (or "square-root"), `S`, where `P = S * S^T`.
+*   **Advantage:** This is numerically more stable and robust. It guarantees that the covariance matrix remains positive semi-definite, which can be lost in standard UKF/EKF implementations due to numerical errors, preventing filter divergence.
 
-$$\mathbf{x}_k = \begin{bmatrix} \text{SoC}_k \\ U_{p,k} \end{bmatrix}$$
+### 5. State-Space Model for the SR-DUKF
 
-### 3. Process Model (Discrete-Time)
+#### State Filter (SoC Estimation)
+*   **State Vector:** `x = [SoC, U_p]` (State of Charge, Polarization Voltage)
+*   **Process Model:** Describes how SoC and U_p evolve based on current.
+*   **Measurement Model:** Relates the state to the terminal voltage, using the OCV model provided by the LSTM. `V = OCV(SoC, Temp) - I*R_0 - U_p`
 
-**SoC Dynamics (Coulomb Counting):**
-
-$$\text{SoC}_{k+1} = \text{SoC}_k - \frac{\Delta t}{3600 \cdot C_{\text{nom}} \cdot \eta} \cdot I_k$$
-
-**Polarization Voltage Dynamics (RC Decay):**
-
-The polarization RC branch follows first-order decay:
-
-$$U_{p,k+1} = e^{-\Delta t / (R_D \cdot C_D)} \cdot U_{p,k} + R_D \cdot (1 - e^{-\Delta t / (R_D \cdot C_D)}) \cdot I_k$$
-
-**Define:**
-- $\alpha = e^{-\Delta t / (R_D \cdot C_D)}$
-- $\beta = R_D \cdot (1 - \alpha)$
-
-Then:
-
-$$U_{p,k+1} = \alpha \cdot U_{p,k} + \beta \cdot I_k$$
-
-### 4. Discrete Process Model in Matrix Form
-
-$$\mathbf{x}_{k+1} = f(\mathbf{x}_k, I_k) = \begin{bmatrix} 
-\text{SoC}_k - \frac{\Delta t}{3600 \cdot C_{\text{nom}} \cdot \eta} \cdot I_k \\
-\alpha \cdot U_{p,k} + \beta \cdot I_k
-\end{bmatrix}$$
-
-### 5. Measurement Model
-
-$$y_k = h(\mathbf{x}_k, I_k) = \text{OCV}(\text{SoC}_k) - I_k \cdot R_0 - U_{p,k} + v_k$$
-
-### 6. EKF Jacobians (Analytical)
-
-**Process Jacobian** $\mathbf{F}_k$:
-
-$$\mathbf{F}_k = \frac{\partial f}{\partial \mathbf{x}} = \begin{bmatrix}
-1 & 0 \\
-0 & \alpha
-\end{bmatrix}$$
-
-**Measurement Jacobian** $\mathbf{H}_k$:
-
-$$\mathbf{H}_k = \frac{\partial h}{\partial \mathbf{x}} = \begin{bmatrix}
-\frac{d\text{OCV}}{d\text{SoC}} & -1
-\end{bmatrix}$$
-
-where the OCV derivative is computed from the polynomial coefficients:
-
-$$\frac{d\text{OCV}}{d\text{SoC}} = \text{polyval}(\text{poly_deriv}, \text{SoC}_k)$$
-
-### 7. EKF Algorithm (Continuous Loop)
-
-**Time Update (Prediction):**
-
-$$\hat{\mathbf{x}}_{k|k-1} = f(\hat{\mathbf{x}}_{k-1|k-1}, I_k)$$
-
-$$\mathbf{P}_{k|k-1} = \mathbf{F}_k \mathbf{P}_{k-1|k-1} \mathbf{F}_k^T + \mathbf{Q}$$
-
-**Measurement Update (Correction):**
-
-$$\mathbf{K}_k = \mathbf{P}_{k|k-1} \mathbf{H}_k^T (\mathbf{H}_k \mathbf{P}_{k|k-1} \mathbf{H}_k^T + R)^{-1}$$
-
-$$\hat{\mathbf{x}}_{k|k} = \hat{\mathbf{x}}_{k|k-1} + \mathbf{K}_k (y_k - h(\hat{\mathbf{x}}_{k|k-1}, I_k))$$
-
-$$\mathbf{P}_{k|k} = (\mathbf{I} - \mathbf{K}_k \mathbf{H}_k) \mathbf{P}_{k|k-1}$$
-
-where:
-- $\mathbf{K}_k$ = Kalman gain
-- $y_k$ = measured terminal voltage
-- $h(\hat{\mathbf{x}}_{k|k-1}, I_k)$ = predicted voltage
-- $\mathbf{Q}$ = process noise covariance
-- $R$ = measurement noise variance
-
-### 8. OCV Polynomial Fitting
-
-OCV(SoC) is fitted as a 3rd-order polynomial from low-current data:
-
-$$\text{OCV}(\text{SoC}) = p_3 \cdot \text{SoC}^3 + p_2 \cdot \text{SoC}^2 + p_1 \cdot \text{SoC} + p_0$$
-
-**Fitting procedure:**
-1. Load multiple discharge CSV files
-2. For each file, estimate SoC via Coulomb counting (starting from SoC=1.0)
-3. Collect (SoC, V_measured) pairs where |I| < 0.1A (rest periods)
-4. Fit polynomial using least-squares regression
-5. Falls back to linear fit if insufficient data
+#### Parameter Filter (Parameter Estimation)
+*   **State Vector:** `θ = [Q_max, R_0]` (Total Capacity, Internal Resistance)
+*   **Process Model:** Assumes parameters are relatively constant (`θ_{k+1} = θ_k`).
+*   **Measurement Model:** Uses the same terminal voltage equation, but from the perspective of estimating the parameters.
 
 ---
 
@@ -604,10 +507,10 @@ Input discharge CSV file
 - Measured: `Temperature_measured` column
 - Interpretation: affects reaction kinetics; higher temp = faster aging
 
-**EKF_SoC (dimensionless):**
+**UKF_SoC (dimensionless):**
 - Range: 0 to 1
-- Computed: output of Extended Kalman Filter
-- Interpretation: real-time charge state estimate from circuit model
+- Computed: output of the Unscented Kalman Filter
+- Interpretation: real-time charge state estimate from the physics-based model, providing a more robust feature than raw measurements.
 
 ### Normalization Strategy
 
@@ -920,30 +823,17 @@ Rank  File      Battery  Ref_SoH  Pred_SoH  Error
 - **Status:** Production-ready, core functionality
 - **Delete:** **NO** - Essential
 
-#### 2. **scripts/ekf_soc.py** ✓ REQUIRED
-- **Purpose:** Extended Kalman Filter for SoC estimation
-- **Size:** 291 lines
-- **Key Classes:**
-  - `EKF_SoC_Estimator` - Main EKF implementation
-  - `fit_ocv_poly()` - OCV polynomial fitting
-- **Mathematical Content:**
-  - Process model (Coulomb counting + RC decay)
-  - Measurement model (terminal voltage)
-  - Kalman gain computation
-  - Jacobians (analytical)
-- **Status:** Production-ready, mathematically validated
-- **Delete:** **NO** - Core algorithm
+#### 2. **scripts/ekf_soc.py** ⚠ SUPERSEDED
+- **Purpose:** Original Extended Kalman Filter implementation.
+- **Status:** This has been superseded by the more advanced `ukf_soc.py`.
+- **Delete:** **YES** - This file is no longer in use.
 
-#### 3. **scripts/lstm_soh.py** ✓ REQUIRED (ALTERNATIVE)
-- **Purpose:** Standalone LSTM training on real discharge data
-- **Size:** 258 lines
-- **Key Functions:**
-  - `load_real_discharge_data()` - Load SoH labels from metadata
-  - `build_lstm_model()` - LSTM architecture
-  - `create_sequences()` - Time-series to sequences
-- **Status:** Production-ready, alternative to hybrid_train.py
-- **Note:** Simpler than hybrid but doesn't use EKF
-- **Delete:** **NO** - Alternative approach, useful for comparison
+#### 2. **scripts/ukf_soc.py** ✓ REQUIRED
+- **Purpose:** Implements the Square-Root Dual Unscented Kalman Filter (SR-DUKF) for joint state and parameter estimation.
+- **Key Classes:**
+  - `DualUKF` - The main class for the filter.
+- **Status:** Production-ready, core algorithm of the new architecture.
+- **Delete:** **NO** - Essential.
 
 #### 4. **scripts/metadata_loader.py** ✓ REQUIRED
 - **Purpose:** Metadata database interface
@@ -1184,28 +1074,25 @@ pip install jupyter notebook
 ### Training
 
 ```bash
-# Quick demo (50 files, 3 epochs)
-python3 scripts/hybrid_train.py --max-files 50 --epochs 3 --demo
+# Train the OCV-LSTM Model
+python3 scripts/train_dekf_lstm.py --max-files 2000 --epochs 20
 
-# Production training (2000 files, 20 epochs)
-python3 scripts/hybrid_train.py --max-files 2000 --epochs 20 --batch-size 64 --seq-len 50
-
-# Alternative: LSTM-only training
-python3 scripts/lstm_soh.py --max-files 2000 --epochs 20 --seq-len 50
+# Train the hybrid UKF+LSTM model
+python3 scripts/hybrid_train.py --max-files 2000 --epochs 20
 ```
 
 ### Inference
 
 ```bash
-# Single file inference
-python3 scripts/infer_hybrid.py --input cleaned_dataset/data/00001.csv
+# Single file inference using the UKF model
+python3 scripts/infer_ukf.py --input cleaned_dataset/data/00001.csv
 
 # With specific model
-python3 scripts/infer_hybrid.py --input cleaned_dataset/data/00001.csv \
+python3 scripts/infer_ukf.py --input cleaned_dataset/data/00001.csv \
     --model outputs/eda/hybrid_lstm_model.keras
 
 # Diagnostic mode (detailed output)
-python3 scripts/infer_hybrid.py --input cleaned_dataset/data/00001.csv --diagnostic
+python3 scripts/infer_ukf.py --input cleaned_dataset/data/00001.csv --diagnostic
 ```
 
 ### Validation

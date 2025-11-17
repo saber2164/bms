@@ -195,8 +195,8 @@ class EKF_SoC_Estimator:
         i_k: current (A), positive for charge
         """
         soc, u_p = float(x[0]), float(x[1])
-        # Coulomb counting (SoC change). Convert C_nom in Ah to Coulombs via 3600.
-        dsoc = - (self.dt * i_k) / (3600.0 * self.C_nom * self.eta)
+        # Correct sign: charging increases SoC
+        dsoc = (self.dt * i_k) / (3600.0 * self.C_nom * self.eta)
         soc_next = soc + dsoc
 
         # polarization RC exact discrete update
@@ -207,10 +207,10 @@ class EKF_SoC_Estimator:
     def _observation_function(self, x: np.ndarray, i_k: float) -> float:
         """Observation model g(x, u): terminal voltage.
 
-        V = OCV(SoC) - I * R0 - U_p
+        V = OCV(SoC) + I * R0 + U_p
         """
         soc, u_p = float(x[0]), float(x[1])
-        return float(self._ocv_model(soc) - i_k * self.R0 - u_p)
+        return float(self._ocv_model(soc) + i_k * self.R0 + u_p)
 
     # --- EKF steps ---
     def predict(self, i_k: float):
@@ -236,9 +236,9 @@ class EKF_SoC_Estimator:
         Returns updated state estimate.
         """
         # Jacobian of observation g wrt state x: C = dg/dx
-        # dg/dSoC = dOCV/dSoC, dg/dU_p = -1
+        # dg/dSoC = dOCV/dSoC, dg/dU_p = +1
         dOCV_dSoC = self._ocv_derivative(self.x[0])
-        C = np.array([[dOCV_dSoC, -1.0]], dtype=float)  # shape (1,2)
+        C = np.array([[dOCV_dSoC, 1.0]], dtype=float)  # shape (1,2)
 
         # predicted observation
         y_pred = self._observation_function(self.x, i_k)

@@ -102,13 +102,13 @@ rm training.log                             # 2 MB - Old log
 
 ### Essential Production Files
 ```
-✓ scripts/hybrid_train.py           Main training
-✓ scripts/ekf_soc.py                EKF algorithm
-✓ scripts/lstm_soh.py               Alternative LSTM
+✓ scripts/train_dekf_lstm.py        Main training for OCV-LSTM
+✓ scripts/ukf_soc.py                SR-DUKF algorithm
+✓ scripts/dekf_soc.py               DEKF algorithm (alternative)
 ✓ scripts/metadata_loader.py        Database interface
-✓ scripts/infer_hybrid.py           Inference engine
-✓ scripts/test_metadata_based_model.py  Validation
-✓ outputs/eda/hybrid_lstm_model.keras   Trained model
+✓ scripts/infer_ukf.py              Inference engine
+✓ scripts/comprehensive_validation.py  Validation
+✓ outputs/eda/hybrid_lstm_model.keras   Trained OCV model
 ```
 
 ### Key Data
