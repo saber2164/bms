@@ -82,6 +82,7 @@ License
 - This project is released under the MIT License. See `LICENSE` for details.
 
 Where to go next
-- Re-run training with full dataset: increase `--max-files` and `--epochs` in `scripts/train_dekf_lstm.py`.
-- Investigate the validation report in `outputs/eda/test_metadata_based_model_report.json` and `documentation/COMPREHENSIVE_VALIDATION_REPORT.md`.
+- Train model to predict soh and rul based on soc and temperature.
+- make an web app to take live data and predict based on that.
+- Improve the model accuracy.
 
