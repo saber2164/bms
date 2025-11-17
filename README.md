@@ -1,6 +1,6 @@
 # Battery SOH & RUL Estimator (BMS)
 
-This repository contains code, data utilities, and documentation for a hybrid battery State-of-Health (SoH) and Remaining Useful Life (RUL) estimator that combines an Extended Kalman Filter (EKF) SoC feature extractor with an LSTM-based predictor.
+This repository contains code, data utilities, and documentation for a hybrid battery State-of-Health (SoH) and Remaining Useful Life (RUL) estimator that combines a Square-Root Dual Unscented Kalman Filter (SR-DUKF) for robust state and parameter estimation with an LSTM-based Open-Circuit-Voltage (OCV) model.
 
 Contents
 - `cleaned_dataset/` — per-discharge CSV files and `metadata.csv` describing EKF parameters and labels.
@@ -9,11 +9,11 @@ Contents
 - `docs/` and `documentation/` — detailed reports, validation summaries, and quick references.
 
 Key files
-- `scripts/hybrid_train.py` — main training pipeline that uses EKF-derived SoC as an input feature and trains the LSTM SoH/RUL model.
-- `scripts/infer_hybrid.py` — single-file inference using EKF + trained LSTM model.
-- `scripts/ekf_soc.py` — EKF implementation and OCV fitting utilities.
-- `scripts/metadata_loader.py` — utilities to load per-file EKF parameters from `cleaned_dataset/metadata.csv`.
-- `outputs/eda/hybrid_lstm_model.keras` — canonical trained model (if present).
+- `scripts/train_dekf_lstm.py` — main training pipeline that trains the OCV-LSTM model.
+- `scripts/infer_ukf.py` — single-file inference using UKF + trained LSTM OCV model.
+- `scripts/ukf_soc.py` — UKF implementation.
+- `scripts/metadata_loader.py` — utilities to load per-file UKF parameters from `cleaned_dataset/metadata.csv`.
+- `outputs/eda/hybrid_lstm_model.keras` — canonical trained OCV model (if present).
 
 Quick start
 
@@ -29,13 +29,13 @@ pip install -r requirements.txt
 
 ```bash
 # train on a subset (set --max-files to limit); tune epochs/batch/seq-len as needed
-python3 scripts/hybrid_train.py --max-files 200 --epochs 10 --batch-size 64 --seq-len 50
+python3 scripts/train_dekf_lstm.py --max-files 200 --epochs 10 --batch-size 64 --seq-len 50
 ```
 
 3. Run inference on a single discharge file:
 
 ```bash
-python3 scripts/infer_hybrid.py --input-file cleaned_dataset/data/00001.csv --metadata cleaned_dataset/metadata.csv --model outputs/eda/hybrid_lstm_model.keras
+python3 scripts/infer_ukf.py --input-file cleaned_dataset/data/00001.csv --model outputs/eda/hybrid_lstm_model.keras
 ```
 
 4. Run the validation workflow (example uses 100 random files):
@@ -52,9 +52,9 @@ bms/
 │  ├─ metadata.csv
 │  └─ data/ (per-discharge CSVs: 00001.csv ...)
 ├─ scripts/
-│  ├─ hybrid_train.py
-│  ├─ infer_hybrid.py
-│  ├─ ekf_soc.py
+│  ├─ train_dekf_lstm.py
+│  ├─ infer_ukf.py
+│  ├─ ukf_soc.py
 │  └─ metadata_loader.py
 ├─ outputs/
 │  └─ eda/ (models, predictions, reports)
@@ -82,6 +82,6 @@ License
 - This project is released under the MIT License. See `LICENSE` for details.
 
 Where to go next
-- Re-run training with full dataset: increase `--max-files` and `--epochs` in `scripts/hybrid_train.py`.
+- Re-run training with full dataset: increase `--max-files` and `--epochs` in `scripts/train_dekf_lstm.py`.
 - Investigate the validation report in `outputs/eda/test_metadata_based_model_report.json` and `documentation/COMPREHENSIVE_VALIDATION_REPORT.md`.
 

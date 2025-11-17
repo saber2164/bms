@@ -26,129 +26,95 @@ This document explains the mathematical models and implementation details for ea
 - **1.0** = fully charged
 - **0.5** = 50% charge remaining
 
-### 1.2 EKF-Based SoC Estimation
+### 1.2 UKF-Based SoC Estimation
 
-SoC is estimated using an **Extended Kalman Filter** (EKF) that combines:
-- **Physics-based model** (Coulomb counting + circuit model)
-- **Measurement update** (voltage feedback)
+SoC is estimated using a **Dual Unscented Kalman Filter** architecture.
 
-#### State Vector
+#### Dual Filter Architecture
+- **State Filter (UKF):** Estimates the fast-changing state (SoC) at every time step.
+- **Parameter Filter (UKF):** Estimates the slow-changing parameters (like capacity `Q_max` and resistance `R_0`) at a slower rate.
+
+This allows the filter to adapt to battery aging.
+
+#### The Unscented Transform
+Instead of linearizing the model like an EKF, the UKF uses the **Unscented Transform**:
+1.  **Sigma Points:** A set of points ("sigma points") are chosen to capture the mean and covariance of the state.
+2.  **Propagation:** These points are propagated through the true non-linear model.
+3.  **New Estimate:** A new mean and covariance are calculated from the propagated points.
+
+This approach is more accurate for non-linear systems.
+
+#### State Vector (State Filter)
 
 $$\mathbf{x}_k = \begin{bmatrix} \text{SoC}_k \\ U_{p,k} \end{bmatrix}$$
 
 Where:
 - **SoC** = state of charge (0–1)
-- **U_p** = polarization voltage (RC branch voltage, in Volts)
+- **U_p** = polarization voltage (V)
 
-#### 1.2.1 Process Model (Coulomb Counting + RC Dynamics)
+#### 1.2.1 Process Model (Non-linear)
+The process model is a non-linear function `f` that describes the evolution of the state:
+$$\mathbf{x}_{k+1} = f(\mathbf{x}_k, I_k) + w_k$$
+where `w_k` is the process noise.
 
 **SoC Update (Coulomb Counting):**
-$$\text{SoC}_{k+1} = \text{SoC}_k - \frac{\Delta t \cdot I_k}{3600 \cdot C_{\text{nom}} \cdot \eta}$$
-
-Where:
-- **Δt** = time step (default: 1.0 second)
-- **I_k** = current (A); negative = discharge, positive = charge
-- **C_nom** = nominal battery capacity (Ah)
-- **η** = Coulombic efficiency (default: 0.99)
-  - Accounts for internal losses during charging/discharging
-  - 0.99 = 1% energy loss per cycle
+$$\text{SoC}_{k+1} = \text{SoC}_k - \frac{\Delta t \cdot I_k}{3600 \cdot Q_{\text{max}} \cdot \eta}$$
 
 **Polarization RC Model Update:**
-$$U_{p,k+1} = \alpha \cdot U_{p,k} + \beta \cdot I_k$$
+$$U_{p,k+1} = e^{-\Delta t / \tau} \cdot U_{p,k} + R_D \cdot (1 - e^{-\Delta t / \tau}) \cdot I_k$$
+where `τ = R_D * C_D`.
 
-Where:
-- **α** = $e^{-\Delta t / (R_D \cdot C_D)}$ (exponential decay factor)
-- **β** = $R_D \cdot (1 - \alpha)$ (current-to-voltage scaling)
-- **R_D** = polarization resistance (default: 0.01 Ω)
-- **C_D** = polarization capacitance (default: 500.0 F)
-
-#### 1.2.2 Observation Model (Voltage Measurement)
+#### 1.2.2 Observation Model (Non-linear)
+The observation model is a non-linear function `h` that relates the state to the measurement:
+$$V_{\text{meas}} = h(\mathbf{x}_k, I_k) + v_k$$
+where `v_k` is the measurement noise.
 
 **Predicted Terminal Voltage:**
-$$V_{\text{pred}} = \text{OCV}(\text{SoC}) - I_k \cdot R_0 - U_p$$
+$$V_{\text{pred}} = \text{OCV}(\text{SoC}_k, \text{Temp}_k) - I_k \cdot R_0 - U_p$$
 
 Where:
-- **OCV(SoC)** = Open Circuit Voltage (polynomial fit, see section 1.3)
-- **R_0** = series resistance (default: 0.05 Ω)
-- **U_p** = polarization voltage (from RC model)
+- **OCV(SoC, Temp)** = Open Circuit Voltage, provided by a pre-trained LSTM model.
+- **R_0** = series resistance, estimated by the parameter filter.
 
-**Measurement Innovation (error signal):**
+#### 1.2.3 UKF Update Step
+The UKF uses the voltage innovation to refine the SoC estimate without calculating Jacobians.
+
+**Innovation (error signal):**
 $$\nu_k = V_{\text{meas}} - V_{\text{pred}}$$
 
-This error drives SoC correction toward actual measurements.
+The filter computes the Kalman Gain based on the propagated sigma points and uses it to correct the state and its covariance.
 
-#### 1.2.3 EKF Update Step
+**Safeguards:**
+The implementation includes safeguards to clamp the SoC between 0 and 1 and limit the maximum step size to prevent divergence.
 
-The EKF uses the voltage innovation to refine SoC estimate:
+### 1.3 OCV (Open Circuit Voltage) LSTM Model
 
-**Kalman Gain Calculation:**
-$$K_k = P_k \cdot C^T \cdot (C \cdot P_k \cdot C^T + R)^{-1}$$
+The OCV model is a **data-driven LSTM neural network** that provides the OCV value for the UKF.
 
-Where:
-- **C** = observation Jacobian = $[\partial \text{OCV}/\partial \text{SoC}, -1]$
-- **P_k** = state covariance matrix
-- **R** = measurement noise variance (default: 0.01 V²)
+**Model:**
+- A pre-trained Long Short-Term Memory (LSTM) network.
+- **Inputs:** State of Charge (SoC) and Temperature.
+- **Output:** Open-Circuit Voltage (OCV).
 
-**State Correction:**
-$$\mathbf{x}_{k} \leftarrow \mathbf{x}_k + K_k \cdot \nu_k$$
+This approach is more accurate than a fixed polynomial because the LSTM can learn the complex, non-linear relationship between SoC, temperature, and OCV from a large dataset. It adapts to different battery behaviors and operating conditions.
 
-**Safeguard (max_soc_step):**
-$$\text{SoC}_{\text{step}} = \text{clamp}(\Delta \text{SoC}, -0.1, +0.1)$$
-
-Limits large SoC jumps (default max ±0.1 per update) to protect against measurement outliers.
-
-**Final Constraint:**
-$$\text{SoC}_k = \text{clamp}(\text{SoC}_k, 0.0, 1.0)$$
-
-Keeps SoC in valid physical range.
-
-### 1.3 OCV (Open Circuit Voltage) Polynomial Model
-
-#### Fitting Process
-
-The OCV model is a **polynomial function** fitted from low-current discharge data:
-
-**Data Selection:**
-- Collect (SoC, voltage) pairs when $|I| \leq 0.01$ A (low current threshold)
-- Pool data from up to 20,000 sample points across the dataset
-- Skip rows with NaN or invalid measurements
-
-**Polynomial Degree:** Cubic (degree = 3)
-
-**Fitting:**
-$$\text{OCV}(\text{SoC}) = c_3 \cdot \text{SoC}^3 + c_2 \cdot \text{SoC}^2 + c_1 \cdot \text{SoC} + c_0$$
-
-**Coefficients for Your Model (hybrid_lstm_model.keras):**
-```
-OCV(SoC) = -12.73·SoC³ + 21.97·SoC² - 12.07·SoC + 6.32 [Volts]
-```
-
-This represents the relationship between battery charge level (0–1) and no-load voltage (V).
-
-#### Interpretation
-
-- At **SoC = 0** (empty): OCV ≈ 6.32 V
-- At **SoC = 0.5** (half): OCV ≈ 3.8 V (voltage-SoC is nonlinear)
-- At **SoC = 1.0** (full): OCV ≈ 3.5 V (battery cells in series)
-
-### 1.4 Default EKF Parameters
+### 1.4 Default UKF Parameters
 
 | Parameter | Default | Unit | Description |
 |-----------|---------|------|-------------|
 | **dt** | 1.0 | s | Time step (sampling interval) |
-| **C_nom** | 2.3 | Ah | Nominal battery capacity |
-| **R0** | 0.05 | Ω | Series (ohmic) resistance |
+| **Q_max** | 2.3 | Ah | Nominal battery capacity |
+| **R_0** | 0.05 | Ω | Series (ohmic) resistance |
 | **R_D** | 0.01 | Ω | Polarization branch resistance |
 | **C_D** | 500.0 | F | Polarization branch capacitance |
 | **eta** | 0.99 | — | Coulombic efficiency (charge/discharge loss) |
-| **max_soc_step** | 0.1 | — | Max ΔSoC per measurement update |
-| **Q** (process noise) | diag([1e-4, 1e-2]) | — | State transition uncertainty |
-| **R** (measurement noise) | 0.01 | V² | Voltage measurement uncertainty |
+| **Q** (process noise) | diag([1e-6, 1e-6]) | — | State transition uncertainty |
+| **R** (measurement noise) | 1e-2 | V² | Voltage measurement uncertainty |
 
 ### 1.5 SoC Output
 
 **In Inference CSV:**
-- Column: `EKF_SoC`
+- Column: `UKF_SoC`
 - Range: [0.0, 1.0]
 - Meaning: Percentage of nominal capacity available
 
@@ -190,10 +156,10 @@ The LSTM model takes a **50-timestep window** of features and predicts SoH:
 
 **Input Features (sliding window):**
 $$\mathbf{X}_{\text{window}} = \begin{bmatrix}
-V_{\text{measured}, 1} & I_{\text{measured}, 1} & T_{\text{measured}, 1} & \text{EKF\_SoC}_1 \\
-V_{\text{measured}, 2} & I_{\text{measured}, 2} & T_{\text{measured}, 2} & \text{EKF\_SoC}_2 \\
+V_{\text{measured}, 1} & I_{\text{measured}, 1} & T_{\text{measured}, 1} & \text{UKF\_SoC}_1 \\
+V_{\text{measured}, 2} & I_{\text{measured}, 2} & T_{\text{measured}, 2} & \text{UKF\_SoC}_2 \\
 \vdots & \vdots & \vdots & \vdots \\
-V_{\text{measured}, 50} & I_{\text{measured}, 50} & T_{\text{measured}, 50} & \text{EKF\_SoC}_{50}
+V_{\text{measured}, 50} & I_{\text{measured}, 50} & T_{\text{measured}, 50} & \text{UKF\_SoC}_{50}
 \end{bmatrix}$$
 
 Shape: **(50, 4)** — 50 timesteps × 4 features
@@ -359,9 +325,9 @@ By definition, higher SoH correlates with higher RUL:
 2. Compute SoH = Capacity / C_nom per file
 3. Compute RUL = cycles until SoH < 0.8 per battery
 4. For each discharge CSV file:
-   a. Run EKF to produce SoC time-series
+   a. Run UKF to produce SoC time-series
    b. Load V_measured, I_measured, T_measured
-   c. Build feature matrix: [V, I, T, EKF_SoC]
+   c. Build feature matrix: [V, I, T, UKF_SoC]
 5. Create sliding windows (50-timestep overlapping sequences)
 6. Assign labels [SoH, RUL_scaled] to each window
 7. Train LSTM with train/val split (85/15)
@@ -373,13 +339,13 @@ By definition, higher SoH correlates with higher RUL:
 ```
 1. Load user's CSV (requires V_measured, I_measured, optional T_measured)
 2. Auto-fit OCV polynomial (if not cached)
-3. Create EKF with loaded/fitted OCV coefficients
-4. Run EKF over entire CSV → SoC time-series
-5. Build features: [V, I, T, EKF_SoC]
+3. Create UKF with loaded/fitted OCV coefficients
+4. Run UKF over entire CSV → SoC time-series
+5. Build features: [V, I, T, UKF_SoC]
 6. Create sliding windows (50-timestep sequences)
 7. Run LSTM on each window → [pred_SoH, pred_RUL_scaled]
 8. Write per-row predictions to output CSV:
-   - EKF_SoC: result from step 4
+   - UKF_SoC: result from step 4
    - pred_SoH: from step 7 (only at window-end rows)
    - pred_RUL_scaled: from step 7 (only at window-end rows)
 ```
@@ -420,7 +386,7 @@ RUL_MAE = mean(|pred_RUL_scaled - true_RUL_scaled|)
 
 | Metric | Value | Range | Status |
 |--------|-------|-------|--------|
-| **EKF_SoC** | 0.8434 (mean) | [0.8085, 0.9687] | ✅ No saturation |
+| **UKF_SoC** | 0.8434 (mean) | [0.8085, 0.9687] | ✅ No saturation |
 | **pred_SoH** | 0.4711 (mean) | [0.2476, 0.8451] | ✅ Diverse states |
 | **pred_RUL_scaled** | 0.0264 (mean) | [0.0092, 0.0684] | ✅ Inverse SoH correlation |
 

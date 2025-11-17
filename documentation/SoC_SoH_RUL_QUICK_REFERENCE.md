@@ -1,6 +1,6 @@
 # Quick Reference: SoC, SoH, RUL Formulas & Parameters
 
-##  SoC (State of Charge) - Extended Kalman Filter
+##  SoC (State of Charge) - Unscented Kalman Filter
 
 ### Core Formulas
 
@@ -10,25 +10,25 @@
 | **Polarization RC** | $U_{p,k+1} = \alpha \cdot U_{p,k} + \beta \cdot I_k$ | α=exp(-Δt/R_D·C_D), β=R_D(1-α) |
 | **Predicted Voltage** | $V_{\text{pred}} = \text{OCV}(\text{SoC}) - I_k \cdot R_0 - U_p$ | R0=0.05Ω |
 | **Innovation** | $\nu = V_{\text{meas}} - V_{\text{pred}}$ | Drives SoC correction |
-| **OCV Model** | $\text{OCV}(\text{SoC}) = -12.73·\text{SoC}^3 + 21.97·\text{SoC}^2 - 12.07·\text{SoC} + 6.32$ | Cubic polynomial fit |
+| **OCV Model** | $\text{OCV}(\text{SoC}, \text{Temp})$ | LSTM-based model |
 
-### EKF Parameters
+### UKF Parameters
 
 ```python
-ekf_params = {
+ukf_params = {
     "dt": 1.0,              # Time step (seconds)
-    "C_nom": 2.3,           # Nominal capacity (Ah)
-    "R0": 0.05,             # Series resistance (Ω)
+    "Q_max": 2.3,           # Nominal capacity (Ah)
+    "R_0": 0.05,             # Series resistance (Ω)
     "R_D": 0.01,            # Polarization resistance (Ω)
     "C_D": 500.0,           # Polarization capacitance (F)
     "eta": 0.99,            # Coulombic efficiency
-    "max_soc_step": 0.1,    # Max ΔSoC per update (outlier protection)
-    "ocv_coeffs": None      # Fitted OCV coefficients (auto-loaded if None)
+    "Q": [1e-6, 1e-6],      # Process noise covariance
+    "R": 1e-2,              # Measurement noise variance
 }
 ```
 
 ### Output
-- **Column:** `EKF_SoC`
+- **Column:** `UKF_SoC`
 - **Range:** [0.0, 1.0]
 - **Meaning:** Fraction of nominal capacity available
 
@@ -69,7 +69,7 @@ features = [
     Voltage_measured,      # Raw voltage (V)
     Current_measured,      # Raw current (A)
     Temperature_measured,  # Raw temperature (°C)
-    EKF_SoC               # Estimated state of charge
+    UKF_SoC               # Estimated state of charge
 ]  # Shape: (50, 4) per window
 ```
 
@@ -184,19 +184,19 @@ RUL_cycles = cycles_until_SoH_drops_below_0.8(current_SoH)
 
 ```bash
 # Use different capacity
-python3 scripts/infer_hybrid.py --input data.csv \
-  --ekf-params '{"C_nom": 2.5, "R0": 0.06}'
+python3 scripts/infer_ukf.py --input data.csv \
+  --ukf-params '{"Q_max": 2.5, "R_0": 0.06}'
 
 # Tighter sequence window
-python3 scripts/infer_hybrid.py --input data.csv \
+python3 scripts/infer_ukf.py --input data.csv \
   --seq-len 25  # Default: 50
 
-# Diagnostic mode to inspect EKF
-python3 scripts/infer_hybrid.py --input data.csv \
-  --diagnostic  # Outputs .ekf_diag.csv
+# Diagnostic mode to inspect UKF
+python3 scripts/infer_ukf.py --input data.csv \
+  --diagnostic  # Outputs .ukf_diag.csv
 
 # Convert RUL to absolute cycles
-python3 scripts/infer_hybrid.py --input data.csv \
+python3 scripts/infer_ukf.py --input data.csv \
   --rul-max 2000  # Max cycles in dataset
 ```
 
@@ -217,10 +217,10 @@ python3 scripts/infer_hybrid.py --input data.csv \
 
 ##  Diagnostic Mode Output
 
-Run with `--diagnostic` to get per-step EKF details:
+Run with `--diagnostic` to get per-step UKF details:
 
 ```csv
-# outputs/eda/data.ekf_diag.csv
+# outputs/eda/data.ukf_diag.csv
 prior_soc,v_pred,innovation,post_soc
 0.9500,3.650,0.040,0.9504
 0.9504,3.645,0.045,0.9509
@@ -240,23 +240,23 @@ prior_soc,v_pred,innovation,post_soc
 
 ```bash
 # Simplest (uses all defaults)
-python3 scripts/infer_hybrid.py --input cleaned_dataset/data/00001.csv
+python3 scripts/infer_ukf.py --input cleaned_dataset/data/00001.csv
 
 # With diagnostics and custom output
-python3 scripts/infer_hybrid.py \
+python3 scripts/infer_ukf.py \
   --input cleaned_dataset/data/00001.csv \
   --out my_predictions.csv \
   --diagnostic
 
 # With custom parameters and absolute RUL
-python3 scripts/infer_hybrid.py \
+python3 scripts/infer_ukf.py \
   --input cleaned_dataset/data/00001.csv \
-  --ekf-params '{"C_nom": 2.4}' \
+  --ukf-params '{"Q_max": 2.4}' \
   --rul-max 2000 \
   --seq-len 25
 
 # Refit OCV polynomial
-python3 scripts/infer_hybrid.py \
+python3 scripts/infer_ukf.py \
   --input cleaned_dataset/data/00001.csv \
   --auto-init-ocv
 ```
@@ -267,21 +267,21 @@ python3 scripts/infer_hybrid.py \
 
 | Component | File | Key Functions |
 |-----------|------|---|
-| **SoC (EKF)** | `scripts/ekf_soc.py` | `EKF_SoC_Estimator`, `fit_ocv_poly` |
-| **Training** | `scripts/hybrid_train.py` | `prepare_dataset`, `build_lstm` |
-| **Inference** | `scripts/infer_hybrid.py` | `infer_single_file`, `run_ekf_for_file` |
+| **SoC (UKF)** | `scripts/ukf_soc.py` | `DualUKF`, `UnscentedTransform` |
+| **Training** | `scripts/train_dekf_lstm.py` | `prepare_dataset`, `build_lstm` |
+| **Inference** | `scripts/infer_ukf.py` | `infer_single_file`, `run_ukf_for_file` |
 | **Artifacts** | `outputs/eda/` | `.keras` model, `.npy` OCV, `.json` metrics |
 
 ---
 
 ##  Summary
 
-**SoC** = Real-time charge level via **EKF** (physics-based)  
+**SoC** = Real-time charge level via **UKF** (physics-based)  
 **SoH** = Capacity degradation predicted by **LSTM** (data-driven)  
 **RUL** = Remaining cycles predicted by **LSTM** (data-driven)
 
 All three work together:
-1. EKF produces reliable SoC estimate from voltage/current
+1. UKF produces reliable SoC estimate from voltage/current
 2. SoC becomes a feature for the LSTM
 3. LSTM learns capacity degradation patterns (SoH, RUL) from historical discharge data
 4. Predictions help schedule maintenance before failure
