@@ -2,3 +2,7 @@ pandas>=1.5
 numpy>=1.23
 matplotlib>=3.5
 seaborn>=0.12
+tensorflow
+scikit-learn
+keras-tuner
+flask

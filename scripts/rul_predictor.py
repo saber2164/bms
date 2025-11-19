@@ -13,38 +13,56 @@ class RULPredictor:
     the SoH is predicted to reach a defined end-of-life threshold (e.g., 80%).
     """
 
-    def __init__(self, sequence_length: int = 10, end_of_life_soh: float = 0.8):
+    def __init__(self, sequence_length: int = 10, end_of_life_soh: float = 0.8, n_features: int = 1, hp=None):
         """
         Initializes the RULPredictor.
 
         Args:
             sequence_length (int): The number of historical SoH values to use as input (N cycles).
             end_of_life_soh (float): The SoH threshold that defines the battery's end-of-life.
+            n_features (int): The number of input features per time step.
+            hp (keras_tuner.HyperParameters): Optional HyperParameters object for tuning.
         """
         if not (0 < end_of_life_soh < 1):
             raise ValueError("end_of_life_soh must be a float between 0 and 1.")
 
         self.sequence_length = sequence_length
         self.end_of_life_soh = end_of_life_soh
-        self.model = self._build_model()
+        self.n_features = n_features
+        self.hp = hp
+        self.model = self.build_model()
 
-    def _build_model(self) -> Sequential:
+    def build_model(self, hp=None) -> Sequential:
         """
         Builds the hybrid CNN-LSTM model architecture for direct RUL prediction.
 
         Returns:
             A compiled TensorFlow/Keras Sequential model.
         """
+        # Hyperparameters
+        if self.hp:
+            conv_filters = self.hp.Int('conv_filters', min_value=16, max_value=64, step=16)
+            conv_kernel = self.hp.Int('conv_kernel', min_value=3, max_value=7, step=2)
+            lstm_units = self.hp.Int('lstm_units', min_value=32, max_value=128, step=32)
+            dense_units = self.hp.Int('dense_units', min_value=16, max_value=64, step=16)
+            learning_rate = self.hp.Choice('learning_rate', values=[1e-2, 1e-3, 1e-4])
+        else:
+            conv_filters = 16
+            conv_kernel = 3
+            lstm_units = 32
+            dense_units = 16
+            learning_rate = 0.001
+
         model = Sequential([
-            Input(shape=(self.sequence_length, 1), name="soh_sequence_input"),
-            Conv1D(filters=16, kernel_size=3, activation='relu', padding='causal'),
-            LSTM(units=32, activation='tanh', return_sequences=False),
-            Dense(units=16, activation='relu'),
+            Input(shape=(self.sequence_length, self.n_features), name="soh_sequence_input"),
+            Conv1D(filters=conv_filters, kernel_size=conv_kernel, activation='relu', padding='causal'),
+            LSTM(units=lstm_units, activation='tanh', return_sequences=False),
+            Dense(units=dense_units, activation='relu'),
             Dense(units=1, name="rul_output")  # Directly predict RUL
         ])
 
         model.compile(
-            optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
+            optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate),
             loss='mean_squared_error',
             metrics=['mean_absolute_error']
         )
