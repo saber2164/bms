@@ -57,7 +57,7 @@ class RULPredictor:
             Input(shape=(self.sequence_length, self.n_features), name="soh_sequence_input"),
             Conv1D(filters=conv_filters, kernel_size=conv_kernel, activation='relu', padding='causal'),
             LSTM(units=lstm_units, activation='tanh', return_sequences=False),
-            Dense(units=dense_units, activation='relu'),
+            Dense(units=dense_units, activation='tanh'),
             Dense(units=1, name="rul_output")  # Directly predict RUL
         ])
 

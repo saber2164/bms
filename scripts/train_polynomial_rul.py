@@ -53,7 +53,12 @@ def load_data():
     
     for bat_id in batteries:
         bat_df = df[df['battery_id'] == bat_id].copy()
-        bat_df['soh'] = bat_df['capacity'] / NOMINAL_CAPACITY
+        # Calculate SoH relative to initial capacity (iloc[0])
+        nominal_capacity = bat_df['capacity'].iloc[0]
+        bat_df['soh'] = bat_df['capacity'] / nominal_capacity
+        
+        # No truncation
+        bat_df = bat_df.reset_index(drop=True)
         bat_df['cycle'] = np.arange(1, len(bat_df) + 1)
         
         # Calculate True RUL
@@ -79,55 +84,36 @@ def load_data():
         
     return pd.concat(processed_data)
 
+try:
+    from scripts.polynomial_rul import PolynomialRULPredictor
+except ImportError:
+    from polynomial_rul import PolynomialRULPredictor
+
 def predict_rul_polynomial(cycle_data, current_cycle):
-    """
-    Fit polynomial to data up to current_cycle.
-    Solve for SoH = 0.8.
-    """
-    history = cycle_data[cycle_data['cycle'] <= current_cycle]
+    # Add rolling mean smoothing
+    cycle_data = cycle_data.copy()
+    cycle_data['soh'] = cycle_data['soh'].rolling(window=5, min_periods=1).mean()
     
-    if len(history) < 5:
-        return np.nan # Not enough data
-        
-    x = history['cycle'].values
-    y = history['soh'].values
-    
-    # Fit 2nd degree polynomial: soh = ax^2 + bx + c
-    try:
-        z = np.polyfit(x, y, 2)
-        p = np.poly1d(z)
-        
-        # Solve p(cycle) = 0.8
-        # ax^2 + bx + c - 0.8 = 0
-        roots = (p - EOL_SOH).roots
-        
-        # Filter real roots > current_cycle
-        real_roots = [r.real for r in roots if np.isreal(r) and r.real > current_cycle]
-        
-        if not real_roots:
-            # Maybe linear fit?
-            z1 = np.polyfit(x, y, 1)
-            p1 = np.poly1d(z1)
-            roots1 = (p1 - EOL_SOH).roots
-            real_roots = [r.real for r in roots1 if np.isreal(r) and r.real > current_cycle]
-            
-        if real_roots:
-            eol_cycle_pred = min(real_roots)
-            return eol_cycle_pred - current_cycle
-        else:
-            return np.nan
-            
-    except:
-        return np.nan
+    predictor = PolynomialRULPredictor(eol_soh=EOL_SOH)
+    return predictor.predict(cycle_data, current_cycle)
 
 def evaluate_baseline():
     print("Loading data...")
     df = load_data()
     
     batteries = df['battery_id'].unique()
-    # Split train/test (use same logic as RUL model roughly)
-    # We just need a test set to evaluate.
-    # Let's take last 20% as test.
+    
+    # Filter out batteries with too few data points (e.g. started at EOL)
+    valid_batteries = []
+    for bat_id in batteries:
+        if len(df[df['battery_id'] == bat_id]) > 10:
+            valid_batteries.append(bat_id)
+            
+    batteries = np.array(valid_batteries)
+    np.random.seed(42)
+    np.random.shuffle(batteries)
+    
+    # Split train/test
     split_idx = int(0.8 * len(batteries))
     test_batteries = batteries[split_idx:]
     
@@ -145,9 +131,13 @@ def evaluate_baseline():
             true_rul = bat_df[bat_df['cycle'] == cycle]['rul'].values[0]
             pred_rul = predict_rul_polynomial(bat_df, cycle)
             
+            # print(f"Cycle {cycle}: True RUL {true_rul}, Pred RUL {pred_rul}")
+            
             if not np.isnan(pred_rul) and pred_rul < 5000: # Filter crazy predictions
                 y_true.append(true_rul)
                 y_pred.append(pred_rul)
+            # else:
+            #     print(f"Skipped Cycle {cycle}: Pred {pred_rul}")
                 
     mae = mean_absolute_error(y_true, y_pred)
     mse = mean_squared_error(y_true, y_pred)

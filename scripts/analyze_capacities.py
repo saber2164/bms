@@ -1,8 +1,16 @@
 import pandas as pd
 import matplotlib.pyplot as plt
+import os
 
 def analyze_capacities():
+    if not os.path.exists('cleaned_dataset/metadata.csv'):
+        print("Metadata file not found.")
+        return
+        
     meta_df = pd.read_csv('cleaned_dataset/metadata.csv')
+    
+    if not os.path.exists('outputs'):
+        os.makedirs('outputs')
     
     # Filter discharge
     discharge_df = meta_df[meta_df['type'] == 'discharge'].copy()

@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Battery SoC Estimator - UI Preview</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        /* Embedded CSS from static/style.css */
+        :root {
+            --bg-color: #000000;
+            --card-bg: #000000;
+            --text-primary: #ffffff;
+            --text-secondary: #aaaaaa;
+            --accent-color: #ffffff;
+            --accent-hover: #cccccc;
+            --success-color: #ffffff;
+            --danger-color: #ffffff;
+            --border-color: #333333;
+            --glass-border: 2px solid #ffffff;
+            --font-family: 'Courier New', Courier, monospace;
+            /* Monospace for a technical feel */
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: var(--font-family);
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 1000px;
+            padding: 2rem;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 3rem;
+            border-bottom: 2px solid #fff;
+            padding-bottom: 1rem;
+        }
+
+        header h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: -0.05em;
+            margin-bottom: 0.5rem;
+        }
+
+        header p {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+
+        .dashboard {
+            display: grid;
+            grid-template-columns: 300px 1fr;
+            gap: 2rem;
+        }
+
+        .card {
+            background: var(--card-bg);
+            border: 2px solid #fff;
+            padding: 1.5rem;
+            box-shadow: 4px 4px 0px #fff;
+            /* Brutalist shadow */
+        }
+
+        .input-section {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .chart-section {
+            min-height: 400px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .chart-section canvas {
+            flex-grow: 1;
+        }
+
+        h2 {
+            font-size: 1.1rem;
+            font-weight: 700;
+            margin-bottom: 1.5rem;
+            text-transform: uppercase;
+            border-bottom: 1px solid #fff;
+            padding-bottom: 0.5rem;
+        }
+
+        .form-group {
+            margin-bottom: 1rem;
+            position: relative;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 0.25rem;
+            font-size: 0.8rem;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+
+        input {
+            width: 100%;
+            padding: 0.75rem;
+            background: #000;
+            border: 2px solid #fff;
+            border-radius: 0;
+            color: #fff;
+            font-family: var(--font-family);
+            font-size: 1rem;
+            transition: all 0.2s ease;
+        }
+
+        input:focus {
+            outline: none;
+            background: #111;
+        }
+
+        .unit {
+            position: absolute;
+            right: 1rem;
+            top: 2.1rem;
+            color: #fff;
+            font-weight: 700;
+            font-size: 0.9rem;
+            pointer-events: none;
+        }
+
+        .btn-primary {
+            width: 100%;
+            padding: 1rem;
+            background: #fff;
+            border: none;
+            border-radius: 0;
+            color: #000;
+            font-weight: 700;
+            font-size: 1rem;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: transform 0.1s ease;
+            margin-top: 1rem;
+        }
+
+        .btn-primary:hover {
+            background: #ccc;
+        }
+
+        .btn-primary:active {
+            transform: translateY(2px);
+        }
+
+        .prediction-display {
+            margin-top: 2rem;
+            text-align: center;
+            padding-top: 2rem;
+            border-top: 2px solid #fff;
+        }
+
+        .rul-value {
+            font-size: 4rem;
+            font-weight: 700;
+            color: #fff;
+            line-height: 1;
+            margin-top: 0.5rem;
+        }
+
+        .rul-label {
+            color: var(--text-secondary);
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+
+        @media (max-width: 900px) {
+            .dashboard {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <h1>Battery SoC Estimator</h1>
+            <p>Real-time Dual UKF State of Charge Estimation</p>
+        </header>
+
+        <div class="dashboard">
+            <!-- Input Section -->
+            <section class="card input-section">
+                <h2>Live Parameters</h2>
+                <div class="form-group">
+                    <label for="voltage">Voltage</label>
+                    <input type="number" id="voltage" step="0.001" value="3.700">
+                    <span class="unit">V</span>
+                </div>
+                <div class="form-group">
+                    <label for="current">Current</label>
+                    <input type="number" id="current" step="0.001" value="1.000">
+                    <span class="unit">A</span>
+                </div>
+                <div class="form-group">
+                    <label for="temperature">Temperature</label>
+                    <input type="number" id="temperature" step="0.1" value="25.0">
+                    <span class="unit">°C</span>
+                </div>
+                <button id="predict-btn" class="btn-primary">Add Data Point & Estimate</button>
+
+                <div class="prediction-display">
+                    <div class="rul-label">Estimated SoC</div>
+                    <div class="rul-value" id="soc-display">-- %</div>
+                </div>
+            </section>
+
+            <!-- Visualization Section -->
+            <section class="card chart-section">
+                <h2>SoC Trend</h2>
+                <canvas id="socChart"></canvas>
+            </section>
+        </div>
+    </div>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const predictBtn = document.getElementById('predict-btn');
+            const socDisplay = document.getElementById('soc-display');
+            const ctx = document.getElementById('socChart').getContext('2d');
+
+            // State to store history of inputs
+            let history = [];
+            let mockSoC = 90.0; // Start at 90% for mock simulation
+
+            // Initialize Chart
+            let chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Estimated SoC (%)',
+                        data: [],
+                        borderColor: '#ffffff', // White
+                        backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                        borderWidth: 2,
+                        pointBackgroundColor: '#ffffff',
+                        pointRadius: 3,
+                        tension: 0.1, // Less smooth, more technical
+                        fill: true
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            max: 100,
+                            grid: {
+                                color: '#333333'
+                            },
+                            ticks: {
+                                color: '#ffffff',
+                                font: {
+                                    family: 'Courier New'
+                                }
+                            },
+                            title: { display: true, text: 'State of Charge (%)', color: '#ffffff', font: { family: 'Courier New', weight: 'bold' } }
+                        },
+                        x: {
+                            grid: {
+                                display: false
+                            },
+                            ticks: {
+                                color: '#ffffff',
+                                font: {
+                                    family: 'Courier New'
+                                }
+                            },
+                            title: { display: true, text: 'Time Step', color: '#ffffff', font: { family: 'Courier New', weight: 'bold' } }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            labels: {
+                                color: '#ffffff',
+                                font: {
+                                    family: 'Courier New'
+                                }
+                            }
+                        },
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false,
+                            backgroundColor: '#ffffff',
+                            titleColor: '#000000',
+                            bodyColor: '#000000',
+                            borderColor: '#ffffff',
+                            borderWidth: 1,
+                            titleFont: { family: 'Courier New' },
+                            bodyFont: { family: 'Courier New' }
+                        }
+                    }
+                }
+            });
+
+            predictBtn.addEventListener('click', () => {
+                // Get inputs
+                const voltage = parseFloat(document.getElementById('voltage').value);
+                const current = parseFloat(document.getElementById('current').value);
+                const temperature = parseFloat(document.getElementById('temperature').value);
+
+                if (isNaN(voltage) || isNaN(current) || isNaN(temperature)) {
+                    alert("Please enter valid numbers for all fields.");
+                    return;
+                }
+
+                // Simulate API Delay
+                predictBtn.innerText = "Estimating...";
+                predictBtn.style.opacity = "0.7";
+
+                setTimeout(() => {
+                    // Mock Logic: Decrease SoC slightly based on current
+                    // This is just for visualization
+                    const degradation = (current * 0.1) + (Math.random() * 0.05);
+                    mockSoC = Math.max(0, mockSoC - degradation);
+
+                    const latestSoC = mockSoC.toFixed(1);
+
+                    // Update Display
+                    socDisplay.innerText = `${latestSoC} %`;
+
+                    // Update Chart
+                    const step = chart.data.labels.length + 1;
+                    chart.data.labels.push(step);
+                    chart.data.datasets[0].data.push(mockSoC);
+                    chart.update();
+
+                    predictBtn.innerText = "Add Data Point & Estimate";
+                    predictBtn.style.opacity = "1";
+                }, 500);
+            });
+        });
+    </script>
+</body>
+
+</html>

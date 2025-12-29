@@ -2,64 +2,90 @@ import os
 import numpy as np
 import pandas as pd
 from flask import Flask, render_template, request, jsonify
-import tensorflow as tf
-from scripts.rul_predictor import RULPredictor
-import joblib
+from scripts.simple_ukf import SimplifiedDualUKF
 
 app = Flask(__name__)
 
-# Load Model and Scaler
-SEQUENCE_LENGTH = 15
-N_FEATURES = 6 # SoH, Temp, Re, Rct, IC_Peak, IC_Volt
-EOL_SOH = 0.8
+# --- Global State ---
+dukf_instance = None
 
-print("Loading model and scaler...")
-try:
-    # Initialize predictor
-    predictor = RULPredictor(sequence_length=SEQUENCE_LENGTH, n_features=N_FEATURES)
-    model = predictor.build_model()
-    model.load_weights('outputs/rul_model.weights.h5')
-    print("Model loaded.")
-    
-    scaler = joblib.load('outputs/feature_scaler.pkl')
-    print("Scaler loaded.")
-except Exception as e:
-    print(f"Error loading model/scaler: {e}")
-    model = None
-    scaler = None
+print("Using simplified UKF with linear OCV model (no neural network)")
+print("OCV model: V = 1.2*SoC + 3.0 (3.0V at 0%, 4.2V at 100%)")
 
 @app.route('/')
 def index():
     return render_template('index.html')
 
-@app.route('/api/predict', methods=['POST'])
-def predict():
-    if model is None or scaler is None:
-        return jsonify({'error': 'Model not loaded'}), 500
-        
+@app.route('/api/init_filter', methods=['POST'])
+def init_filter():
+    """Initialize the Dual UKF filter"""
+    global dukf_instance
     try:
         data = request.json
-        # Let's assume inputs are raw and we scale them roughly based on dataset stats.
-        # SoH: 0-1 (already scaled effectively if capacity/nominal)
-        # Temp: ~20-40?
-        # Re: ~0.05
-        # Rct: ~0.15
+        initial_soc = float(data.get('initial_soc', 0.9))
+        q_max = float(data.get('q_max', 1.5))
+        r0 = float(data.get('r0', 0.05))
         
-        # TODO: In a real app, save and load the scaler.
-        # For now, we will pass values through as-is, assuming the user (or UI) handles normalization 
-        # or the values are close enough to the training distribution (0-1).
-        # Actually, let's just document that inputs should be normalized 0-1 for now.
+        # Create simplified UKF instance (no model/scaler needed!)
+        dukf_instance = SimplifiedDualUKF(
+            dt=1.0,
+            C_nom=q_max,
+            R0_nom=r0,
+            ocv_a=1.2,  # Linear OCV slope
+            ocv_b=3.0   # Linear OCV offset
+        )
         
-        # Reshape for model: (1, SEQUENCE_LENGTH, N_FEATURES)
-        input_reshaped = input_data.reshape(1, SEQUENCE_LENGTH, N_FEATURES)
+        # Set initial SoC
+        dukf_instance.x[0] = initial_soc
         
-        prediction = rul_predictor.model.predict(input_reshaped)
-        rul_pred = float(prediction[0][0])
-        
-        return jsonify({'rul': rul_pred})
-
+        return jsonify({
+            'status': 'success',
+            'message': f'Filter initialized with SoC={initial_soc:.2f}, Q_max={q_max}Ah, R0={r0}Ω',
+            'initial_state': {
+                'soc': float(dukf_instance.x[0]),
+                'q_max': float(dukf_instance.theta[0]),
+                'r0': float(dukf_instance.theta[1])
+            }
+        })
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'status': 'error', 'message': str(e)}), 400
+
+@app.route('/api/predict_soc', methods=['POST'])
+def predict_soc():
+    """Run a single UKF step"""
+    global dukf_instance
+    if dukf_instance is None:
+        return jsonify({'status': 'error', 'message': 'Filter not initialized'}), 400
+    
+    try:
+        data = request.json
+        print(f"Received prediction request: {data}")
+        v_meas = float(data['voltage'])
+        i_meas = float(data['current'])
+        temp = float(data.get('temperature', 25.0))
+        
+        # Run UKF step
+        soc_est, q_max_est, r0_est = dukf_instance.step(v_meas, i_meas, temp)
+        print(f"UKF step result: SoC={soc_est}, Q_max={q_max_est}, R0={r0_est}")
+        
+        return jsonify({
+            'status': 'success',
+            'soc': float(soc_est),
+            'q_max': float(q_max_est),
+            'r0': float(r0_est)
+        })
+    except Exception as e:
+        print(f"Prediction error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'status': 'error', 'message': str(e)}), 400
+
+@app.route('/api/reset', methods=['POST'])
+def reset_filter():
+    """Reset the filter state"""
+    global dukf_instance
+    dukf_instance = None
+    return jsonify({'status': 'success', 'message': 'Filter reset'})
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(host='0.0.0.0', port=8080, debug=True)

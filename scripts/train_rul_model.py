@@ -4,8 +4,9 @@ import numpy as np
 import tensorflow as tf
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import MinMaxScaler
+import joblib
 from rul_predictor import RULPredictor
-
+MAX_RUL = 2000 
 def load_and_preprocess_data(soh_file: str, metadata_file: str, ic_file: str) -> tuple[list[np.ndarray], list[np.ndarray], int]:
     """
     Loads battery capacity and metadata, merges them, and returns a list of
@@ -87,10 +88,6 @@ def load_and_preprocess_data(soh_file: str, metadata_file: str, ic_file: str) ->
     
     df = df.sort_values(['battery_id', 'start_time'])
     
-    # Calculate SoH
-    # Use fixed nominal capacity of 2.0 Ah (standard for 18650 cells in this dataset)
-    NOMINAL_CAPACITY = 2.0
-    
     # Features to use
     feature_cols = ['soh', 'average_temp', 'Re', 'Rct', 'ic_peak_height', 'ic_peak_voltage']
     
@@ -99,10 +96,32 @@ def load_and_preprocess_data(soh_file: str, metadata_file: str, ic_file: str) ->
     
     for bat_id in df['battery_id'].unique():
         bat_df = df[df['battery_id'] == bat_id].copy()
+
+        # Calculate SoH relative to initial capacity (iloc[0]) as requested
+        # This is the standard definition, assuming fresh battery at start
+        nominal_capacity = bat_df['calculated_capacity'].iloc[0]
         
-        # Calculate SoH relative to fixed nominal
-        bat_df['soh'] = bat_df['calculated_capacity'] / NOMINAL_CAPACITY
+        # No truncation needed if we assume start is fresh, or we can keep the max_cap logic if we want robust start
+        # But user requested iloc[0]. Let's stick to that.
+        # However, we should still probably remove the "warm-up" if it exists, or just let the model handle it?
+        # User instruction: "Remove the hardcoded NOMINAL_CAPACITY = 2.0. Replace it with dynamic calculation: nominal_capacity = bat_df['calculated_capacity'].iloc[0]."
+        # User didn't explicitly say "remove truncation", but truncation was based on max_cap_idx.
+        # If we use iloc[0], max_cap_idx might be later.
+        # Let's remove the truncation logic to strictly follow "Fix Training Logic" instructions which didn't mention truncation.
+        # Or better, keep truncation but based on the new nominal capacity? No, truncation was "start from max".
+        # If we use iloc[0], we are saying t=0 is the reference.
+        
+        bat_df['soh'] = bat_df['calculated_capacity'] / nominal_capacity
         bat_df['soh'] = np.clip(bat_df['soh'], 0, 1.0)
+        
+        # Truncate "warm-up" phase: Start from the point of maximum capacity
+        # This ensures we are modeling degradation, not the initial capacity increase
+        # We calculate max capacity index on the *original* bat_df (before any other slicing if any)
+        # But here bat_df is the full history for the battery.
+        max_cap_idx = bat_df['calculated_capacity'].idxmax()
+        bat_df = bat_df.loc[max_cap_idx:].copy()
+        bat_df = bat_df.reset_index(drop=True)
+
         
         # RUL calculation
         bat_df = bat_df.sort_values('test_id').reset_index(drop=True)
@@ -125,7 +144,7 @@ def load_and_preprocess_data(soh_file: str, metadata_file: str, ic_file: str) ->
     
     return processed_feature_curves, processed_rul_curves, len(feature_cols)
 
-def get_train_test_data(soh_file: str, metadata_file: str, ic_file: str, sequence_length: int, end_of_life_soh: float, test_split: float = 0.2) -> tuple:
+def get_train_test_data(soh_file: str, metadata_file: str, ic_file: str, sequence_length: int, end_of_life_soh: float, test_split: float = 0.2, MAX_RUL = None) -> tuple:
     """
     Loads data, splits it, scales it, and creates sequences for training and testing.
     
@@ -165,7 +184,7 @@ def get_train_test_data(soh_file: str, metadata_file: str, ic_file: str, sequenc
     import joblib
     joblib.dump(scaler, 'outputs/feature_scaler.pkl')
     print("Scaler saved to outputs/feature_scaler.pkl")
-    
+    MAX_RUL = 2000  # Assuming max RUL for scaling
     # Helper to create sequences
     def create_sequences(features_list, ruls_list):
         X, y = [], []
@@ -175,17 +194,29 @@ def get_train_test_data(soh_file: str, metadata_file: str, ic_file: str, sequenc
             
             for i in range(len(scaled_features) - sequence_length):
                 X.append(scaled_features[i:i+sequence_length])
-                y.append(ruls[i+sequence_length]) # Predict RUL at the end of sequence
+                # y.append(ruls[i+sequence_length]) # Predict RUL at the end of sequence
+                raw_rul = ruls[i+sequence_length]
+                y.append(raw_rul)
         return np.array(X), np.array(y)
 
     print("Creating sequences...")
     X_train, y_train = create_sequences(train_features, train_ruls)
     X_test, y_test = create_sequences(test_features, test_ruls)
     
-    print(f"Training samples: {X_train.shape[0]}")
-    print(f"Testing samples: {X_test.shape[0]}")
+    # Scale targets
+    max_rul = np.max(y_train)
+    y_train = y_train / max_rul
+    y_test = y_test / max_rul
     
-    return X_train, y_train, X_test, y_test, n_features
+    # Save max_rul
+    joblib.dump(max_rul, 'outputs/max_rul.pkl')
+    print(f"Max RUL: {max_rul} (Saved to outputs/max_rul.pkl)")
+    
+    print(f"Training samples: {len(X_train)}")
+    print(f"Testing samples: {len(X_test)}")
+    
+    return X_train, y_train, X_test, y_test, n_features, max_rul
+
 
 def prepare_training_data(soh_curves: list[np.ndarray], sequence_length: int, end_of_life_soh: float) -> tuple[np.ndarray, np.ndarray]:
     """
@@ -237,10 +268,10 @@ def main():
     EPOCHS = 50
     BATCH_SIZE = 32
     TRAIN_TEST_SPLIT = 0.8
-    
+    MAX_RUL = 2000  # Assuming max RUL for scaling
     # Get data
-    X_train, y_train, X_test, y_test, n_features = get_train_test_data(
-        SOH_FILE, METADATA_FILE, IC_FILE, SEQUENCE_LENGTH, END_OF_LIFE_SOH, 1.0 - TRAIN_TEST_SPLIT
+    X_train, y_train, X_test, y_test, n_features,MAX_RUL = get_train_test_data(
+        SOH_FILE, METADATA_FILE, IC_FILE, SEQUENCE_LENGTH, END_OF_LIFE_SOH, 1.0 - TRAIN_TEST_SPLIT, MAX_RUL
     )
     
     if X_train is None:
@@ -277,13 +308,19 @@ def main():
     
     # Make predictions
     y_pred = predictor.model.predict(X_test).flatten()
+    y_test_cycles = y_test * MAX_RUL
+    y_pred_cycles = y_pred * MAX_RUL
 
     # Calculate metrics
-    mse = np.mean(np.square(y_test - y_pred))
-    mae = np.mean(np.abs(y_test - y_pred))
+    mse = np.mean(np.square(y_test_cycles - y_pred_cycles))
+    mae = np.mean(np.abs(y_test_cycles - y_pred_cycles))
     print(f"\nTest Set Validation Metrics:")
     print(f"  Mean Squared Error (MSE): {mse:.2f}")
-    print(f"  Mean Absolute Error (MAE): {mae:.2f}")
+    print(f"  Mean Absolute Error (MAE): {mae:.2f} cycles")
+    
+    print("\nSample Predictions (Actual vs Predicted):")
+    for i in range(min(10, len(y_test_cycles))):
+        print(f"  Sample {i}: Actual={y_test_cycles[i]:.2f}, Predicted={y_pred_cycles[i]:.2f}")
 
     # --- 6. Visualize Results ---
     print("\n--- Generating Validation Plot ---")
@@ -291,11 +328,11 @@ def main():
     
     # Plot actual vs. predicted RUL for a sample from the test set
     sample_indices = np.random.choice(len(y_test), size=min(500, len(y_test)), replace=False)
-    plt.scatter(y_test[sample_indices], y_pred[sample_indices], alpha=0.5, label='Predicted vs. Actual')
+    plt.scatter(y_test_cycles[sample_indices], y_pred_cycles[sample_indices], alpha=0.5, label='Predicted vs. Actual')
     
     # Plot the ideal line
-    min_val = min(np.min(y_test), np.min(y_pred))
-    max_val = max(np.max(y_test), np.max(y_pred))
+    min_val = min(np.min(y_test_cycles), np.min(y_pred_cycles))
+    max_val = max(np.max(y_test_cycles), np.max(y_pred_cycles))
     plt.plot([min_val, max_val], [min_val, max_val], 'r--', lw=2, label='Ideal Fit')
     
     plt.title('RUL Prediction: Actual vs. Predicted on Test Set')

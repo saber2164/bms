@@ -55,6 +55,10 @@ def calculate_dq_dv(voltage, capacity, window_length=21, polyorder=2):
 
 def extract_features():
     print("Loading metadata...")
+    if not os.path.exists(DATA_DIR):
+        print(f"Data directory not found: {DATA_DIR}")
+        return
+
     try:
         meta_df = pd.read_csv(METADATA_FILE)
     except FileNotFoundError:
@@ -156,10 +160,14 @@ def extract_features():
             print(f"Error processing {filename}: {e}")
             
     # Save to CSV
-    features_df = pd.DataFrame(features)
-    features_df.to_csv(OUTPUT_FILE, index=False)
-    print(f"Saved IC features to {OUTPUT_FILE}")
-    print(features_df.head())
+    # Save to CSV
+    if features:
+        features_df = pd.DataFrame(features)
+        features_df.to_csv(OUTPUT_FILE, index=False)
+        print(f"Saved IC features to {OUTPUT_FILE}")
+        print(features_df.head())
+    else:
+        print("No features extracted.")
 
 if __name__ == "__main__":
     extract_features()

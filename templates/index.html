@@ -4,28 +4,717 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Battery RUL Predictor</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <title>Battery SoC Estimator - Dual UKF</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        /* Embedded CSS from static/style.css */
+        :root {
+            --bg-color: #000000;
+            --card-bg: #000000;
+            --text-primary: #ffffff;
+            --text-secondary: #aaaaaa;
+            --accent-color: #ffffff;
+            --accent-hover: #cccccc;
+            --success-color: #ffffff;
+            --danger-color: #ffffff;
+            --border-color: #333333;
+            --glass-border: 2px solid #ffffff;
+            --font-family: 'Courier New', Courier, monospace;
+            /* Monospace for a technical feel */
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: var(--font-family);
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 1400px;
+            padding: 1.5rem;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 1.5rem;
+            border-bottom: 2px solid #fff;
+            padding-bottom: 0.75rem;
+        }
+
+        header h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: -0.05em;
+            margin-bottom: 0.25rem;
+        }
+
+        header p {
+            color: var(--text-secondary);
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+
+        .dashboard {
+            display: grid;
+            grid-template-columns: 200px 200px 1fr;
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .card {
+            background: var(--card-bg);
+            border: 2px solid #fff;
+            padding: 1rem;
+            box-shadow: 4px 4px 0px #fff;
+        }
+
+        .input-section {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .chart-section {
+            height: 500px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .chart-section canvas {
+            flex-grow: 1;
+        }
+
+        h2 {
+            font-size: 0.9rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+            text-transform: uppercase;
+            border-bottom: 1px solid #fff;
+            padding-bottom: 0.4rem;
+        }
+
+        .form-group {
+            margin-bottom: 0.75rem;
+            position: relative;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 0.2rem;
+            font-size: 0.7rem;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+
+        input {
+            width: 100%;
+            padding: 0.5rem;
+            background: #000;
+            border: 2px solid #fff;
+            border-radius: 0;
+            color: #fff;
+            font-family: var(--font-family);
+            font-size: 0.85rem;
+            transition: all 0.2s ease;
+        }
+
+        input:focus {
+            outline: none;
+            background: #111;
+        }
+
+        .unit {
+            position: absolute;
+            right: 0.75rem;
+            top: 1.8rem;
+            color: #fff;
+            font-weight: 700;
+            font-size: 0.75rem;
+            pointer-events: none;
+        }
+
+        .btn-primary {
+            width: 100%;
+            padding: 0.75rem;
+            background: #fff;
+            border: none;
+            border-radius: 0;
+            color: #000;
+            font-weight: 700;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: transform 0.1s ease;
+            margin-top: 0.5rem;
+        }
+
+        .btn-primary:hover {
+            background: #ccc;
+        }
+
+        .btn-primary:active {
+            transform: translateY(2px);
+        }
+
+        .prediction-display {
+            margin-top: 1rem;
+            text-align: center;
+            padding-top: 1rem;
+            border-top: 2px solid #fff;
+        }
+
+        .rul-value {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: #fff;
+            line-height: 1;
+            margin-top: 0.25rem;
+        }
+
+        .rul-label {
+            color: var(--text-secondary);
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+
+        .status-msg {
+            margin-top: 0.5rem;
+            font-size: 0.7rem;
+            color: #fff;
+            text-align: center;
+            min-height: 1em;
+        }
+
+        /* Project Summary Section */
+        .summary-section {
+            margin-top: 3rem;
+            padding-top: 2rem;
+            border-top: 3px solid #fff;
+        }
+
+        .summary-section h2 {
+            font-size: 1.5rem;
+            text-align: center;
+            margin-bottom: 1rem;
+        }
+
+        .summary-brief {
+            max-width: 900px;
+            margin: 0 auto 1.5rem;
+            font-size: 0.95rem;
+            line-height: 1.7;
+            color: var(--text-secondary);
+            text-align: center;
+        }
+
+        .summary-brief strong {
+            color: #fff;
+        }
+
+        .know-more-btn {
+            display: block;
+            margin: 0 auto 2rem;
+            padding: 0.75rem 2rem;
+            background: #fff;
+            border: 2px solid #fff;
+            color: #000;
+            font-family: var(--font-family);
+            font-weight: 700;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            box-shadow: 4px 4px 0px #fff;
+        }
+
+        .know-more-btn:hover {
+            background: #ccc;
+        }
+
+        .know-more-btn:active {
+            transform: translate(2px, 2px);
+            box-shadow: 2px 2px 0px #fff;
+        }
+
+        .summary-details {
+            display: none;
+            margin-top: 1rem;
+        }
+
+        .summary-details.expanded {
+            display: block;
+        }
+
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+
+        .summary-card {
+            background: var(--card-bg);
+            border: 2px solid #fff;
+            padding: 1.25rem;
+            box-shadow: 4px 4px 0px #fff;
+        }
+
+        .summary-card h3 {
+            font-size: 1rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            border-bottom: 1px solid #fff;
+            padding-bottom: 0.5rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .summary-card p,
+        .summary-card ul {
+            font-size: 0.85rem;
+            line-height: 1.6;
+            color: var(--text-secondary);
+        }
+
+        .summary-card ul {
+            list-style: none;
+            padding: 0;
+        }
+
+        .summary-card li {
+            margin-bottom: 0.5rem;
+            padding-left: 1rem;
+            position: relative;
+        }
+
+        .summary-card li:before {
+            content: "▸";
+            position: absolute;
+            left: 0;
+            color: #fff;
+        }
+
+        .metric-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #fff;
+            margin: 0.5rem 0;
+        }
+
+        @media (max-width: 1200px) {
+            .dashboard {
+                grid-template-columns: 1fr;
+            }
+
+            .chart-section {
+                height: 400px;
+            }
+        }
+    </style>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
 </head>
 
 <body>
     <div class="container">
         <header>
-            <h1>Battery RUL Estimator</h1>
-            <p>Advanced Deep Learning & Physics-Informed Model</p>
+            <h1>Battery SoC Estimator</h1>
+            <p>Real-time Dual UKF State of Charge Estimation</p>
         </header>
 
-        </section>
+        <div class="dashboard">
+            <!-- Initialization Section -->
+            <section class="card">
+                <h2>Initialize</h2>
+                <div class="form-group">
+                    <label for="init-capacity">Capacity</label>
+                    <input type="number" id="init-capacity" step="0.1" value="2.0">
+                    <span class="unit">Ah</span>
+                </div>
+                <div class="form-group">
+                    <label for="init-soc">Initial SoC</label>
+                    <input type="number" id="init-soc" step="0.01" value="0.9">
+                    <span class="unit">0-1</span>
+                </div>
+                <div class="form-group">
+                    <label for="init-r0">R0</label>
+                    <input type="number" id="init-r0" step="0.001" value="0.01">
+                    <span class="unit">Ω</span>
+                </div>
+                <div class="form-group">
+                    <label for="init-dt">dt</label>
+                    <input type="number" id="init-dt" step="0.1" value="1.0">
+                    <span class="unit">s</span>
+                </div>
+                <button id="init-btn" class="btn-primary">Init</button>
+                <div id="init-status" class="status-msg"></div>
+            </section>
 
-        <!-- Visualization Section -->
-        <section class="card chart-section">
-            <h2>Degradation Forecast</h2>
-            <canvas id="rulChart"></canvas>
-        </section>
-        </main>
+            <!-- Live Parameters Section -->
+            <section class="card input-section">
+                <h2>Parameters</h2>
+                <div class="form-group">
+                    <label for="voltage">Voltage</label>
+                    <input type="number" id="voltage" step="0.001" value="3.700">
+                    <span class="unit">V</span>
+                </div>
+                <div class="form-group">
+                    <label for="current">Current</label>
+                    <input type="number" id="current" step="0.001" value="1.000">
+                    <span class="unit">A</span>
+                </div>
+                <div class="form-group">
+                    <label for="temperature">Temp</label>
+                    <input type="number" id="temperature" step="0.1" value="25.0">
+                    <span class="unit">°C</span>
+                </div>
+                <button id="predict-btn" class="btn-primary">Estimate</button>
+
+                <div class="prediction-display">
+                    <div class="rul-label">SoC</div>
+                    <div class="rul-value" id="soc-display">-- %</div>
+                </div>
+            </section>
+
+            <!-- Visualization Section -->
+            <section class="card chart-section">
+                <h2>SoC Trend (Scroll/Pinch to Zoom)</h2>
+                <canvas id="socChart"></canvas>
+            </section>
+        </div>
+
+        <!-- Project Summary Section -->
+        <div class="summary-section">
+            <h2>Battery SoC Estimation with Dual UKF</h2>
+
+            <div class="summary-brief">
+                <p>
+                    This <strong>Battery Management System</strong> uses a <strong>Dual Unscented Kalman Filter
+                        (DualUKF)</strong>
+                    for real-time State of Charge estimation. The system simultaneously estimates battery states (SoC,
+                    RC voltage)
+                    and adapts parameters (capacity, resistance) using a <strong>dense neural network OCV model</strong>
+                    with
+                    MinMax scaling. Features include <strong>&lt;1% typical error</strong>, temperature compensation,
+                    robust noise handling, and vectorized inference at <strong>1 Hz update rate</strong> (configurable).
+                </p>
+            </div>
+
+            <button id="know-more-btn" class="know-more-btn">Know More ▼</button>
+
+            <div id="summary-details" class="summary-details">
+                <div class="summary-grid">
+                    <div class="summary-card">
+                        <h3>Algorithm</h3>
+                        <ul>
+                            <li><strong>State Filter:</strong> Estimates SoC and U_d every timestep</li>
+                            <li><strong>Parameter Filter:</strong> Adapts Q_max and R_0 every 100 steps</li>
+                            <li><strong>OCV Model:</strong> Dense neural network with MinMax scaling</li>
+                            <li><strong>Battery Model:</strong> Equivalent circuit with RC pair</li>
+                            <li><strong>Tuning:</strong> Square-root formulation for numerical stability</li>
+                        </ul>
+                    </div>
+
+                    <div class="summary-card">
+                        <h3>Key Features</h3>
+                        <ul>
+                            <li>Real-time SoC estimation with &lt;1% typical error</li>
+                            <li>Adaptive capacity and resistance tracking</li>
+                            <li>Temperature-compensated OCV lookup</li>
+                            <li>Robust to measurement noise and model uncertainty</li>
+                            <li>Vectorized observation for fast inference</li>
+                        </ul>
+                    </div>
+
+                    <div class="summary-card">
+                        <h3>Technical Specs</h3>
+                        <p><strong>Model Architecture:</strong></p>
+                        <div class="metric-value">Dense NN</div>
+                        <p>OCV prediction with SoC + Temperature inputs</p>
+                        <br>
+                        <p><strong>Update Rate:</strong></p>
+                        <div class="metric-value">1 Hz</div>
+                        <p>Default sampling period (configurable)</p>
+                    </div>
+
+                    <div class="summary-card">
+                        <h3>Filter Tuning</h3>
+                        <p><strong>State Estimation:</strong></p>
+                        <ul>
+                            <li>Process Noise (State): 1e-6</li>
+                            <li>Process Noise (Params): 1e-8, 1e-9</li>
+                            <li>Measurement Noise: 1e-2</li>
+                        </ul>
+                        <br>
+                        <p><strong>Constraints:</strong></p>
+                        <ul>
+                            <li>SoC: Clipped to [0, 1]</li>
+                            <li>Capacity: Min 0.1 Ah</li>
+                            <li>Resistance: Min 1e-4 Ω</li>
+                        </ul>
+                    </div>
+
+                    <div class="summary-card">
+                        <h3>Battery Model</h3>
+                        <ul>
+                            <li><strong>Circuit:</strong> OCV + R0 + RC pair (R_D, C_D)</li>
+                            <li><strong>State:</strong> [SoC, U_d] - charge level and diffusion voltage</li>
+                            <li><strong>Parameters:</strong> [Q_max, R_0] - capacity and ohmic resistance</li>
+                            <li><strong>Coulomb Counting:</strong> SoC updated via current integration</li>
+                            <li><strong>RC Dynamics:</strong> Exponential decay with time constant R_D×C_D</li>
+                        </ul>
+                    </div>
+
+                    <div class="summary-card">
+                        <h3>Usage Guide</h3>
+                        <p><strong>Step 1:</strong> Initialize filter with battery parameters (capacity, initial SoC,
+                            R0, sampling period)</p>
+                        <p><strong>Step 2:</strong> Stream V, I, T measurements from BMS at each timestep</p>
+                        <p><strong>Step 3:</strong> View real-time SoC estimates and trend on the chart</p>
+                        <p><strong>Tip:</strong> Use scroll wheel or pinch gesture to zoom on the chart for detailed
+                            inspection</p>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
-    <script src="{{ url_for('static', filename='script.js') }}"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const initBtn = document.getElementById('init-btn');
+            const initStatus = document.getElementById('init-status');
+            const predictBtn = document.getElementById('predict-btn');
+            const socDisplay = document.getElementById('soc-display');
+            const ctx = document.getElementById('socChart').getContext('2d');
+
+            let isInitialized = false;
+
+            // Initialize Chart
+            let chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Estimated SoC (%)',
+                        data: [],
+                        borderColor: '#ffffff',
+                        backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                        borderWidth: 2,
+                        pointBackgroundColor: '#ffffff',
+                        pointBorderColor: '#000000',
+                        pointBorderWidth: 2,
+                        pointRadius: 6,
+                        pointHoverRadius: 8,
+                        pointHoverBackgroundColor: '#ffffff',
+                        pointHoverBorderColor: '#ffffff',
+                        pointHoverBorderWidth: 3,
+                        tension: 0.1,
+                        fill: true
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            max: 100,
+                            grid: {
+                                color: '#333333'
+                            },
+                            ticks: {
+                                color: '#ffffff',
+                                font: {
+                                    family: 'Courier New'
+                                }
+                            },
+                            title: { display: true, text: 'State of Charge (%)', color: '#ffffff', font: { family: 'Courier New', weight: 'bold' } }
+                        },
+                        x: {
+                            grid: {
+                                display: false
+                            },
+                            ticks: {
+                                color: '#ffffff',
+                                font: {
+                                    family: 'Courier New'
+                                }
+                            },
+                            title: { display: true, text: 'Time Step', color: '#ffffff', font: { family: 'Courier New', weight: 'bold' } }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            labels: {
+                                color: '#ffffff',
+                                font: {
+                                    family: 'Courier New'
+                                }
+                            }
+                        },
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false,
+                            backgroundColor: '#ffffff',
+                            titleColor: '#000000',
+                            bodyColor: '#000000',
+                            borderColor: '#ffffff',
+                            borderWidth: 1,
+                            titleFont: { family: 'Courier New' },
+                            bodyFont: { family: 'Courier New' }
+                        },
+                        zoom: {
+                            zoom: {
+                                wheel: {
+                                    enabled: true,
+                                    speed: 0.1
+                                },
+                                pinch: {
+                                    enabled: true
+                                },
+                                mode: 'xy'
+                            },
+                            pan: {
+                                enabled: true,
+                                mode: 'xy'
+                            },
+                            limits: {
+                                y: { min: 0, max: 100 }
+                            }
+                        }
+                    }
+                }
+            });
+
+            // Initialize Filter Handler
+            initBtn.addEventListener('click', async () => {
+                const capacity = parseFloat(document.getElementById('init-capacity').value);
+                const initialSoc = parseFloat(document.getElementById('init-soc').value);
+                const initialR0 = parseFloat(document.getElementById('init-r0').value);
+
+                initBtn.innerText = "Initializing...";
+
+                try {
+                    const response = await fetch('/api/init_filter', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            initial_soc: initialSoc,
+                            q_max: capacity,  // Changed from capacity_ah
+                            r0: initialR0     // Changed from initial_r0
+                        })
+                    });
+
+                    const data = await response.json();
+
+                    if (data.status === 'success') {  // Changed from response.ok
+                        initStatus.innerText = "Filter Initialized Successfully";
+                        initStatus.style.color = "#ffffff";
+                        isInitialized = true;
+
+                        // Clear chart when reinitializing
+                        history = [];
+                        chart.data.labels = [];
+                        chart.data.datasets[0].data = [];
+                        chart.update();
+                    } else {
+                        initStatus.innerText = "Error: " + (data.message || "Unknown error");  // Changed from data.error
+                        initStatus.style.color = "#ff4444";
+                    }
+                } catch (error) {
+                    initStatus.innerText = "Network Error";
+                    initStatus.style.color = "#ff4444";
+                } finally {
+                    initBtn.innerText = "Initialize Filter";
+                }
+            });
+
+            // Predict Handler
+            predictBtn.addEventListener('click', async () => {
+                if (!isInitialized) {
+                    alert("Please initialize the filter first.");
+                    return;
+                }
+
+                const voltage = parseFloat(document.getElementById('voltage').value);
+                const current = parseFloat(document.getElementById('current').value);
+                const temperature = parseFloat(document.getElementById('temperature').value);
+
+                if (isNaN(voltage) || isNaN(current) || isNaN(temperature)) {
+                    alert("Please enter valid numbers for all fields.");
+                    return;
+                }
+
+                predictBtn.innerText = "Estimating...";
+                predictBtn.style.opacity = "0.7";
+
+                try {
+                    const response = await fetch('/api/predict_soc', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            voltage: voltage,
+                            current: current,
+                            temperature: temperature
+                        })
+                    });
+
+                    const data = await response.json();
+
+                    if (response.ok) {
+                        const soc = data.soc; // 0-1
+                        const socPercent = (soc * 100).toFixed(2);
+
+                        // Update Display
+                        socDisplay.innerText = `${socPercent} %`;
+
+                        // Update Chart
+                        const step = chart.data.labels.length + 1;
+                        chart.data.labels.push(step);
+                        chart.data.datasets[0].data.push(soc * 100);
+                        chart.update();
+                    } else {
+                        alert("Error: " + (data.error || "Unknown error"));
+                    }
+
+                } catch (error) {
+                    console.error(error);
+                    alert("Network Error");
+                } finally {
+                    predictBtn.innerText = "Add Data Point & Estimate";
+                    predictBtn.style.opacity = "1";
+                }
+            });
+
+            // Know More Toggle Handler
+            const knowMoreBtn = document.getElementById('know-more-btn');
+            const summaryDetails = document.getElementById('summary-details');
+
+            knowMoreBtn.addEventListener('click', () => {
+                summaryDetails.classList.toggle('expanded');
+
+                if (summaryDetails.classList.contains('expanded')) {
+                    knowMoreBtn.innerText = 'Show Less ▲';
+                } else {
+                    knowMoreBtn.innerText = 'Know More ▼';
+                }
+            });
+        });
+    </script>
 </body>
 
 </html>

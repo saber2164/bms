@@ -33,8 +33,9 @@ def main():
 
     # Load Data
     print("Loading data for tuning...")
-    X_train, y_train, X_test, y_test, n_features = get_train_test_data(
-        SOH_DATA_FILE, METADATA_FILE, SEQUENCE_LENGTH, END_OF_LIFE_SOH, test_split=0.2
+    # Updated to pass ic_features.csv and unpack 6 values (ignoring max_rul)
+    X_train, y_train, X_test, y_test, n_features, _ = get_train_test_data(
+        SOH_DATA_FILE, METADATA_FILE, 'ic_features.csv', SEQUENCE_LENGTH, END_OF_LIFE_SOH, test_split=0.2
     )
 
     if X_train is None:
