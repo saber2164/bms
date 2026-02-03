@@ -9,3 +9,6 @@ outputs/
 *.zip
 figures/
 .env
+docs/
+*.pdf
+*.h5
