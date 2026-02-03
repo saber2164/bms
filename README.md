@@ -1,3 +1,12 @@
+---
+title: Battery Management System
+emoji: 🔋
+colorFrom: green
+colorTo: blue
+sdk: docker
+pinned: false
+---
+
 # Battery SOH & RUL Estimator (BMS)
 
 This repository contains code, data utilities, and documentation for a hybrid battery State-of-Health (SoH) and Remaining Useful Life (RUL) estimator that combines a Square-Root Dual Unscented Kalman Filter (SR-DUKF) for robust state and parameter estimation with an LSTM-based Open-Circuit-Voltage (OCV) model.
