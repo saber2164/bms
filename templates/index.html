@@ -1,720 +1,683 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Battery SoC Estimator - Dual UKF</title>
+    <title>BMS - Battery SoC Estimator</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
     <style>
-        /* Embedded CSS from static/style.css */
         :root {
-            --bg-color: #000000;
-            --card-bg: #000000;
-            --text-primary: #ffffff;
-            --text-secondary: #aaaaaa;
-            --accent-color: #ffffff;
-            --accent-hover: #cccccc;
-            --success-color: #ffffff;
-            --danger-color: #ffffff;
-            --border-color: #333333;
-            --glass-border: 2px solid #ffffff;
-            --font-family: 'Courier New', Courier, monospace;
-            /* Monospace for a technical feel */
+            --bg: #0a0a0a;
+            --surface: #141414;
+            --surface-hover: #1a1a1a;
+            --border: #2a2a2a;
+            --text: #fafafa;
+            --text-muted: #888;
+            --accent: #3b82f6;
+            --accent-hover: #2563eb;
+            --success: #22c55e;
+            --warning: #f59e0b;
+            --error: #ef4444;
+            --radius: 8px;
+            --font: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
         }
 
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
 
         body {
-            font-family: var(--font-family);
-            background-color: var(--bg-color);
-            color: var(--text-primary);
+            font-family: var(--font);
+            background: var(--bg);
+            color: var(--text);
             min-height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
+            line-height: 1.5;
         }
 
         .container {
-            width: 100%;
             max-width: 1400px;
-            padding: 1.5rem;
+            margin: 0 auto;
+            padding: 2rem;
         }
 
         header {
-            text-align: center;
-            margin-bottom: 1.5rem;
-            border-bottom: 2px solid #fff;
-            padding-bottom: 0.75rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+            padding-bottom: 1.5rem;
+            border-bottom: 1px solid var(--border);
         }
 
-        header h1 {
-            font-size: 2rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: -0.05em;
-            margin-bottom: 0.25rem;
+        .logo { display: flex; align-items: center; gap: 0.75rem; }
+        .logo h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.02em; }
+        .logo span { color: var(--text-muted); font-size: 0.875rem; font-weight: 400; }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            font-size: 0.875rem;
         }
 
-        header p {
-            color: var(--text-secondary);
-            font-size: 0.75rem;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--error);
+            transition: background 0.3s;
         }
+
+        .status-dot.active { background: var(--success); }
 
         .dashboard {
             display: grid;
-            grid-template-columns: 200px 200px 1fr;
-            gap: 1rem;
-            margin-bottom: 2rem;
+            grid-template-columns: 320px 1fr;
+            gap: 1.5rem;
         }
+
+        .sidebar { display: flex; flex-direction: column; gap: 1.5rem; }
 
         .card {
-            background: var(--card-bg);
-            border: 2px solid #fff;
-            padding: 1rem;
-            box-shadow: 4px 4px 0px #fff;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 1.5rem;
         }
 
-        .input-section {
+        .card-header {
             display: flex;
-            flex-direction: column;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.25rem;
         }
 
-        .chart-section {
-            height: 500px;
-            display: flex;
-            flex-direction: column;
-        }
-
-        .chart-section canvas {
-            flex-grow: 1;
-        }
-
-        h2 {
-            font-size: 0.9rem;
-            font-weight: 700;
-            margin-bottom: 1rem;
+        .card-title {
+            font-size: 0.875rem;
+            font-weight: 600;
             text-transform: uppercase;
-            border-bottom: 1px solid #fff;
-            padding-bottom: 0.4rem;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
         }
 
-        .form-group {
-            margin-bottom: 0.75rem;
-            position: relative;
-        }
+        .form-group { margin-bottom: 1rem; }
 
-        label {
+        .form-group label {
             display: block;
-            margin-bottom: 0.2rem;
-            font-size: 0.7rem;
-            font-weight: 700;
+            font-size: 0.75rem;
+            font-weight: 500;
+            color: var(--text-muted);
+            margin-bottom: 0.375rem;
             text-transform: uppercase;
+            letter-spacing: 0.05em;
         }
 
-        input {
+        .input-wrapper {
+            position: relative;
+            display: flex;
+            align-items: center;
+        }
+
+        input[type="number"] {
             width: 100%;
-            padding: 0.5rem;
-            background: #000;
-            border: 2px solid #fff;
-            border-radius: 0;
-            color: #fff;
-            font-family: var(--font-family);
-            font-size: 0.85rem;
-            transition: all 0.2s ease;
+            padding: 0.625rem 2.5rem 0.625rem 0.75rem;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            font-family: var(--font);
+            font-size: 0.875rem;
+            transition: border-color 0.2s, box-shadow 0.2s;
         }
 
-        input:focus {
+        input[type="number"]:focus {
             outline: none;
-            background: #111;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
         }
 
         .unit {
             position: absolute;
             right: 0.75rem;
-            top: 1.8rem;
-            color: #fff;
-            font-weight: 700;
+            color: var(--text-muted);
             font-size: 0.75rem;
+            font-weight: 500;
             pointer-events: none;
         }
 
-        .btn-primary {
+        .btn {
             width: 100%;
-            padding: 0.75rem;
-            background: #fff;
+            padding: 0.75rem 1rem;
             border: none;
-            border-radius: 0;
-            color: #000;
-            font-weight: 700;
-            font-size: 0.85rem;
-            text-transform: uppercase;
+            border-radius: var(--radius);
+            font-family: var(--font);
+            font-size: 0.875rem;
+            font-weight: 600;
             cursor: pointer;
-            transition: transform 0.1s ease;
-            margin-top: 0.5rem;
+            transition: all 0.2s;
         }
 
-        .btn-primary:hover {
-            background: #ccc;
+        .btn-primary {
+            background: var(--accent);
+            color: white;
         }
 
-        .btn-primary:active {
-            transform: translateY(2px);
+        .btn-primary:hover { background: var(--accent-hover); }
+        .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .btn-secondary {
+            background: var(--surface-hover);
+            color: var(--text);
+            border: 1px solid var(--border);
         }
 
-        .prediction-display {
-            margin-top: 1rem;
-            text-align: center;
-            padding-top: 1rem;
-            border-top: 2px solid #fff;
-        }
-
-        .rul-value {
-            font-size: 2.5rem;
-            font-weight: 700;
-            color: #fff;
-            line-height: 1;
-            margin-top: 0.25rem;
-        }
-
-        .rul-label {
-            color: var(--text-secondary);
-            font-size: 0.7rem;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-        }
+        .btn-secondary:hover { background: var(--border); }
 
         .status-msg {
-            margin-top: 0.5rem;
-            font-size: 0.7rem;
-            color: #fff;
+            margin-top: 0.75rem;
+            padding: 0.5rem 0.75rem;
+            border-radius: var(--radius);
+            font-size: 0.75rem;
             text-align: center;
-            min-height: 1em;
+            background: var(--bg);
+            min-height: 2rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
 
-        /* Project Summary Section */
-        .summary-section {
-            margin-top: 3rem;
-            padding-top: 2rem;
-            border-top: 3px solid #fff;
-        }
+        .status-msg.success { background: rgba(34, 197, 94, 0.1); color: var(--success); }
+        .status-msg.error { background: rgba(239, 68, 68, 0.1); color: var(--error); }
 
-        .summary-section h2 {
-            font-size: 1.5rem;
+        .soc-display {
             text-align: center;
-            margin-bottom: 1rem;
+            padding: 1.5rem 0;
         }
 
-        .summary-brief {
-            max-width: 900px;
-            margin: 0 auto 1.5rem;
-            font-size: 0.95rem;
-            line-height: 1.7;
-            color: var(--text-secondary);
-            text-align: center;
-        }
-
-        .summary-brief strong {
-            color: #fff;
-        }
-
-        .know-more-btn {
-            display: block;
-            margin: 0 auto 2rem;
-            padding: 0.75rem 2rem;
-            background: #fff;
-            border: 2px solid #fff;
-            color: #000;
-            font-family: var(--font-family);
-            font-weight: 700;
-            font-size: 0.9rem;
+        .soc-label {
+            font-size: 0.75rem;
+            font-weight: 500;
+            color: var(--text-muted);
             text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-bottom: 0.5rem;
+        }
+
+        .soc-value {
+            font-size: 3rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .soc-value.low { color: var(--error); }
+        .soc-value.medium { color: var(--warning); }
+        .soc-value.high { color: var(--success); }
+
+        .params-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--border);
+        }
+
+        .param-item { text-align: center; }
+        .param-label { font-size: 0.625rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+        .param-value { font-size: 1rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+        .main-content { display: flex; flex-direction: column; gap: 1.5rem; }
+
+        .chart-container {
+            flex: 1;
+            min-height: 400px;
+            position: relative;
+        }
+
+        .chart-container canvas { width: 100% !important; height: 100% !important; }
+
+        .chart-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .chart-actions .btn {
+            width: auto;
+            padding: 0.375rem 0.75rem;
+            font-size: 0.75rem;
+        }
+
+        .info-section { margin-top: 2rem; }
+
+        .info-toggle {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            width: 100%;
+            padding: 1rem;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            font-family: var(--font);
+            font-size: 0.875rem;
+            font-weight: 500;
             cursor: pointer;
-            transition: all 0.2s ease;
-            box-shadow: 4px 4px 0px #fff;
+            transition: background 0.2s;
         }
 
-        .know-more-btn:hover {
-            background: #ccc;
-        }
+        .info-toggle:hover { background: var(--surface-hover); }
+        .info-toggle .arrow { transition: transform 0.3s; }
+        .info-toggle.expanded .arrow { transform: rotate(180deg); }
 
-        .know-more-btn:active {
-            transform: translate(2px, 2px);
-            box-shadow: 2px 2px 0px #fff;
-        }
-
-        .summary-details {
+        .info-content {
             display: none;
             margin-top: 1rem;
         }
 
-        .summary-details.expanded {
-            display: block;
-        }
+        .info-content.expanded { display: block; }
 
-        .summary-grid {
+        .info-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
             gap: 1rem;
-            margin-top: 1rem;
         }
 
-        .summary-card {
-            background: var(--card-bg);
-            border: 2px solid #fff;
-            padding: 1.25rem;
-            box-shadow: 4px 4px 0px #fff;
-        }
-
-        .summary-card h3 {
-            font-size: 1rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            border-bottom: 1px solid #fff;
-            padding-bottom: 0.5rem;
+        .info-card h3 {
+            font-size: 0.875rem;
+            font-weight: 600;
             margin-bottom: 0.75rem;
+            color: var(--text);
         }
 
-        .summary-card p,
-        .summary-card ul {
-            font-size: 0.85rem;
+        .info-card p, .info-card li {
+            font-size: 0.8125rem;
+            color: var(--text-muted);
             line-height: 1.6;
-            color: var(--text-secondary);
         }
 
-        .summary-card ul {
+        .info-card ul {
             list-style: none;
             padding: 0;
         }
 
-        .summary-card li {
-            margin-bottom: 0.5rem;
+        .info-card li {
+            padding: 0.375rem 0;
             padding-left: 1rem;
             position: relative;
         }
 
-        .summary-card li:before {
-            content: "▸";
+        .info-card li::before {
+            content: "";
             position: absolute;
             left: 0;
-            color: #fff;
+            top: 0.75rem;
+            width: 4px;
+            height: 4px;
+            background: var(--accent);
+            border-radius: 50%;
         }
 
-        .metric-value {
-            font-size: 1.5rem;
-            font-weight: 700;
-            color: #fff;
-            margin: 0.5rem 0;
-        }
-
-        @media (max-width: 1200px) {
-            .dashboard {
-                grid-template-columns: 1fr;
-            }
-
-            .chart-section {
-                height: 400px;
-            }
+        @media (max-width: 900px) {
+            .container { padding: 1rem; }
+            .dashboard { grid-template-columns: 1fr; }
+            header { flex-direction: column; gap: 1rem; text-align: center; }
         }
     </style>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
 </head>
-
 <body>
     <div class="container">
         <header>
-            <h1>Battery SoC Estimator</h1>
-            <p>Real-time Dual UKF State of Charge Estimation</p>
+            <div class="logo">
+                <h1>BMS</h1>
+                <span>Dual UKF SoC Estimator</span>
+            </div>
+            <div class="status-indicator">
+                <div class="status-dot" id="status-dot"></div>
+                <span id="status-text">Not Initialized</span>
+            </div>
         </header>
 
         <div class="dashboard">
-            <!-- Initialization Section -->
-            <section class="card">
-                <h2>Initialize</h2>
-                <div class="form-group">
-                    <label for="init-capacity">Capacity</label>
-                    <input type="number" id="init-capacity" step="0.1" value="2.0">
-                    <span class="unit">Ah</span>
+            <div class="sidebar">
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">Initialize Filter</span>
+                    </div>
+                    <div class="form-group">
+                        <label for="init-capacity">Capacity</label>
+                        <div class="input-wrapper">
+                            <input type="number" id="init-capacity" step="0.1" value="2.0">
+                            <span class="unit">Ah</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="init-soc">Initial SoC</label>
+                        <div class="input-wrapper">
+                            <input type="number" id="init-soc" step="0.01" value="0.9" min="0" max="1">
+                            <span class="unit">0-1</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="init-r0">Internal Resistance</label>
+                        <div class="input-wrapper">
+                            <input type="number" id="init-r0" step="0.001" value="0.01">
+                            <span class="unit">Ohm</span>
+                        </div>
+                    </div>
+                    <button id="init-btn" class="btn btn-primary">Initialize</button>
+                    <div id="init-status" class="status-msg"></div>
                 </div>
-                <div class="form-group">
-                    <label for="init-soc">Initial SoC</label>
-                    <input type="number" id="init-soc" step="0.01" value="0.9">
-                    <span class="unit">0-1</span>
-                </div>
-                <div class="form-group">
-                    <label for="init-r0">R0</label>
-                    <input type="number" id="init-r0" step="0.001" value="0.01">
-                    <span class="unit">Ω</span>
-                </div>
-                <div class="form-group">
-                    <label for="init-dt">dt</label>
-                    <input type="number" id="init-dt" step="0.1" value="1.0">
-                    <span class="unit">s</span>
-                </div>
-                <button id="init-btn" class="btn-primary">Init</button>
-                <div id="init-status" class="status-msg"></div>
-            </section>
 
-            <!-- Live Parameters Section -->
-            <section class="card input-section">
-                <h2>Parameters</h2>
-                <div class="form-group">
-                    <label for="voltage">Voltage</label>
-                    <input type="number" id="voltage" step="0.001" value="3.700">
-                    <span class="unit">V</span>
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">Measurement Input</span>
+                    </div>
+                    <div class="form-group">
+                        <label for="voltage">Voltage</label>
+                        <div class="input-wrapper">
+                            <input type="number" id="voltage" step="0.001" value="3.700">
+                            <span class="unit">V</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="current">Current</label>
+                        <div class="input-wrapper">
+                            <input type="number" id="current" step="0.001" value="1.000">
+                            <span class="unit">A</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="temperature">Temperature</label>
+                        <div class="input-wrapper">
+                            <input type="number" id="temperature" step="0.1" value="25.0">
+                            <span class="unit">C</span>
+                        </div>
+                    </div>
+                    <button id="predict-btn" class="btn btn-primary" disabled>Estimate SoC</button>
                 </div>
-                <div class="form-group">
-                    <label for="current">Current</label>
-                    <input type="number" id="current" step="0.001" value="1.000">
-                    <span class="unit">A</span>
+
+                <div class="card">
+                    <div class="soc-display">
+                        <div class="soc-label">State of Charge</div>
+                        <div class="soc-value" id="soc-display">--%</div>
+                    </div>
+                    <div class="params-grid">
+                        <div class="param-item">
+                            <div class="param-label">Capacity</div>
+                            <div class="param-value" id="qmax-display">-- Ah</div>
+                        </div>
+                        <div class="param-item">
+                            <div class="param-label">Resistance</div>
+                            <div class="param-value" id="r0-display">-- Ohm</div>
+                        </div>
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label for="temperature">Temp</label>
-                    <input type="number" id="temperature" step="0.1" value="25.0">
-                    <span class="unit">°C</span>
-                </div>
-                <button id="predict-btn" class="btn-primary">Estimate</button>
-
-                <div class="prediction-display">
-                    <div class="rul-label">SoC</div>
-                    <div class="rul-value" id="soc-display">-- %</div>
-                </div>
-            </section>
-
-            <!-- Visualization Section -->
-            <section class="card chart-section">
-                <h2>SoC Trend (Scroll/Pinch to Zoom)</h2>
-                <canvas id="socChart"></canvas>
-            </section>
-        </div>
-
-        <!-- Project Summary Section -->
-        <div class="summary-section">
-            <h2>Battery SoC Estimation with Dual UKF</h2>
-
-            <div class="summary-brief">
-                <p>
-                    This <strong>Battery Management System</strong> uses a <strong>Dual Unscented Kalman Filter
-                        (DualUKF)</strong>
-                    for real-time State of Charge estimation. The system simultaneously estimates battery states (SoC,
-                    RC voltage)
-                    and adapts parameters (capacity, resistance) using a <strong>dense neural network OCV model</strong>
-                    with
-                    MinMax scaling. Features include <strong>&lt;1% typical error</strong>, temperature compensation,
-                    robust noise handling, and vectorized inference at <strong>1 Hz update rate</strong> (configurable).
-                </p>
             </div>
 
-            <button id="know-more-btn" class="know-more-btn">Know More ▼</button>
+            <div class="main-content">
+                <div class="card" style="flex: 1; display: flex; flex-direction: column;">
+                    <div class="card-header">
+                        <span class="card-title">SoC Trend</span>
+                        <div class="chart-actions">
+                            <button id="reset-zoom-btn" class="btn btn-secondary">Reset Zoom</button>
+                            <button id="clear-chart-btn" class="btn btn-secondary">Clear</button>
+                        </div>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="socChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
 
-            <div id="summary-details" class="summary-details">
-                <div class="summary-grid">
-                    <div class="summary-card">
+        <div class="info-section">
+            <button id="info-toggle" class="info-toggle">
+                <span>Technical Details</span>
+                <span class="arrow">&#9660;</span>
+            </button>
+            <div id="info-content" class="info-content">
+                <div class="info-grid">
+                    <div class="card info-card">
                         <h3>Algorithm</h3>
                         <ul>
-                            <li><strong>State Filter:</strong> Estimates SoC and U_d every timestep</li>
-                            <li><strong>Parameter Filter:</strong> Adapts Q_max and R_0 every 100 steps</li>
-                            <li><strong>OCV Model:</strong> Dense neural network with MinMax scaling</li>
-                            <li><strong>Battery Model:</strong> Equivalent circuit with RC pair</li>
-                            <li><strong>Tuning:</strong> Square-root formulation for numerical stability</li>
+                            <li>State Filter: Estimates SoC and diffusion voltage</li>
+                            <li>Parameter Filter: Adapts capacity and resistance</li>
+                            <li>OCV Model: Linear approximation (3.0V-4.2V)</li>
+                            <li>Square-root formulation for stability</li>
                         </ul>
                     </div>
-
-                    <div class="summary-card">
-                        <h3>Key Features</h3>
+                    <div class="card info-card">
+                        <h3>Battery Model</h3>
                         <ul>
-                            <li>Real-time SoC estimation with &lt;1% typical error</li>
-                            <li>Adaptive capacity and resistance tracking</li>
-                            <li>Temperature-compensated OCV lookup</li>
-                            <li>Robust to measurement noise and model uncertainty</li>
-                            <li>Vectorized observation for fast inference</li>
+                            <li>Equivalent circuit: OCV + R0 + RC pair</li>
+                            <li>State vector: [SoC, U_d]</li>
+                            <li>Parameter vector: [Q_max, R_0]</li>
+                            <li>Coulomb counting with current integration</li>
                         </ul>
                     </div>
-
-                    <div class="summary-card">
-                        <h3>Technical Specs</h3>
-                        <p><strong>Model Architecture:</strong></p>
-                        <div class="metric-value">Dense NN</div>
-                        <p>OCV prediction with SoC + Temperature inputs</p>
-                        <br>
-                        <p><strong>Update Rate:</strong></p>
-                        <div class="metric-value">1 Hz</div>
-                        <p>Default sampling period (configurable)</p>
-                    </div>
-
-                    <div class="summary-card">
-                        <h3>Filter Tuning</h3>
-                        <p><strong>State Estimation:</strong></p>
+                    <div class="card info-card">
+                        <h3>Filter Parameters</h3>
                         <ul>
                             <li>Process Noise (State): 1e-6</li>
                             <li>Process Noise (Params): 1e-8, 1e-9</li>
                             <li>Measurement Noise: 1e-2</li>
-                        </ul>
-                        <br>
-                        <p><strong>Constraints:</strong></p>
-                        <ul>
-                            <li>SoC: Clipped to [0, 1]</li>
-                            <li>Capacity: Min 0.1 Ah</li>
-                            <li>Resistance: Min 1e-4 Ω</li>
+                            <li>SoC constrained to [0, 1]</li>
                         </ul>
                     </div>
-
-                    <div class="summary-card">
-                        <h3>Battery Model</h3>
+                    <div class="card info-card">
+                        <h3>Usage</h3>
                         <ul>
-                            <li><strong>Circuit:</strong> OCV + R0 + RC pair (R_D, C_D)</li>
-                            <li><strong>State:</strong> [SoC, U_d] - charge level and diffusion voltage</li>
-                            <li><strong>Parameters:</strong> [Q_max, R_0] - capacity and ohmic resistance</li>
-                            <li><strong>Coulomb Counting:</strong> SoC updated via current integration</li>
-                            <li><strong>RC Dynamics:</strong> Exponential decay with time constant R_D×C_D</li>
+                            <li>Initialize filter with battery parameters</li>
+                            <li>Input voltage, current, temperature</li>
+                            <li>Click Estimate to run UKF step</li>
+                            <li>Scroll/pinch to zoom the chart</li>
                         </ul>
-                    </div>
-
-                    <div class="summary-card">
-                        <h3>Usage Guide</h3>
-                        <p><strong>Step 1:</strong> Initialize filter with battery parameters (capacity, initial SoC,
-                            R0, sampling period)</p>
-                        <p><strong>Step 2:</strong> Stream V, I, T measurements from BMS at each timestep</p>
-                        <p><strong>Step 3:</strong> View real-time SoC estimates and trend on the chart</p>
-                        <p><strong>Tip:</strong> Use scroll wheel or pinch gesture to zoom on the chart for detailed
-                            inspection</p>
                     </div>
                 </div>
             </div>
         </div>
     </div>
+
     <script>
         document.addEventListener('DOMContentLoaded', () => {
             const initBtn = document.getElementById('init-btn');
             const initStatus = document.getElementById('init-status');
             const predictBtn = document.getElementById('predict-btn');
             const socDisplay = document.getElementById('soc-display');
+            const qmaxDisplay = document.getElementById('qmax-display');
+            const r0Display = document.getElementById('r0-display');
+            const statusDot = document.getElementById('status-dot');
+            const statusText = document.getElementById('status-text');
             const ctx = document.getElementById('socChart').getContext('2d');
 
             let isInitialized = false;
 
-            // Initialize Chart
-            let chart = new Chart(ctx, {
+            const chart = new Chart(ctx, {
                 type: 'line',
                 data: {
                     labels: [],
                     datasets: [{
-                        label: 'Estimated SoC (%)',
+                        label: 'SoC (%)',
                         data: [],
-                        borderColor: '#ffffff',
-                        backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                        borderColor: '#3b82f6',
+                        backgroundColor: 'rgba(59, 130, 246, 0.1)',
                         borderWidth: 2,
-                        pointBackgroundColor: '#ffffff',
-                        pointBorderColor: '#000000',
+                        pointBackgroundColor: '#3b82f6',
+                        pointBorderColor: '#0a0a0a',
                         pointBorderWidth: 2,
-                        pointRadius: 6,
-                        pointHoverRadius: 8,
-                        pointHoverBackgroundColor: '#ffffff',
-                        pointHoverBorderColor: '#ffffff',
-                        pointHoverBorderWidth: 3,
-                        tension: 0.1,
+                        pointRadius: 4,
+                        pointHoverRadius: 6,
+                        tension: 0.3,
                         fill: true
                     }]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
                     scales: {
                         y: {
-                            beginAtZero: true,
+                            min: 0,
                             max: 100,
-                            grid: {
-                                color: '#333333'
-                            },
-                            ticks: {
-                                color: '#ffffff',
-                                font: {
-                                    family: 'Courier New'
-                                }
-                            },
-                            title: { display: true, text: 'State of Charge (%)', color: '#ffffff', font: { family: 'Courier New', weight: 'bold' } }
+                            grid: { color: '#2a2a2a' },
+                            ticks: { color: '#888', font: { family: 'Inter' } },
+                            title: { display: true, text: 'SoC (%)', color: '#888', font: { family: 'Inter', weight: '500' } }
                         },
                         x: {
-                            grid: {
-                                display: false
-                            },
-                            ticks: {
-                                color: '#ffffff',
-                                font: {
-                                    family: 'Courier New'
-                                }
-                            },
-                            title: { display: true, text: 'Time Step', color: '#ffffff', font: { family: 'Courier New', weight: 'bold' } }
+                            grid: { display: false },
+                            ticks: { color: '#888', font: { family: 'Inter' } },
+                            title: { display: true, text: 'Time Step', color: '#888', font: { family: 'Inter', weight: '500' } }
                         }
                     },
                     plugins: {
-                        legend: {
-                            labels: {
-                                color: '#ffffff',
-                                font: {
-                                    family: 'Courier New'
-                                }
-                            }
-                        },
+                        legend: { display: false },
                         tooltip: {
-                            mode: 'index',
-                            intersect: false,
-                            backgroundColor: '#ffffff',
-                            titleColor: '#000000',
-                            bodyColor: '#000000',
-                            borderColor: '#ffffff',
+                            backgroundColor: '#1a1a1a',
+                            titleColor: '#fafafa',
+                            bodyColor: '#888',
+                            borderColor: '#2a2a2a',
                             borderWidth: 1,
-                            titleFont: { family: 'Courier New' },
-                            bodyFont: { family: 'Courier New' }
+                            padding: 12,
+                            displayColors: false,
+                            callbacks: {
+                                label: ctx => `SoC: ${ctx.parsed.y.toFixed(2)}%`
+                            }
                         },
                         zoom: {
-                            zoom: {
-                                wheel: {
-                                    enabled: true,
-                                    speed: 0.1
-                                },
-                                pinch: {
-                                    enabled: true
-                                },
-                                mode: 'xy'
-                            },
-                            pan: {
-                                enabled: true,
-                                mode: 'xy'
-                            },
-                            limits: {
-                                y: { min: 0, max: 100 }
-                            }
+                            zoom: { wheel: { enabled: true, speed: 0.1 }, pinch: { enabled: true }, mode: 'xy' },
+                            pan: { enabled: true, mode: 'xy' },
+                            limits: { y: { min: 0, max: 100 } }
                         }
                     }
                 }
             });
 
-            // Initialize Filter Handler
+            document.getElementById('reset-zoom-btn').addEventListener('click', () => chart.resetZoom());
+            document.getElementById('clear-chart-btn').addEventListener('click', () => {
+                chart.data.labels = [];
+                chart.data.datasets[0].data = [];
+                chart.update();
+            });
+
+            function updateSocColor(soc) {
+                socDisplay.classList.remove('low', 'medium', 'high');
+                if (soc < 20) socDisplay.classList.add('low');
+                else if (soc < 50) socDisplay.classList.add('medium');
+                else socDisplay.classList.add('high');
+            }
+
             initBtn.addEventListener('click', async () => {
                 const capacity = parseFloat(document.getElementById('init-capacity').value);
                 const initialSoc = parseFloat(document.getElementById('init-soc').value);
                 const initialR0 = parseFloat(document.getElementById('init-r0').value);
 
-                initBtn.innerText = "Initializing...";
+                initBtn.disabled = true;
+                initBtn.textContent = 'Initializing...';
 
                 try {
                     const response = await fetch('/api/init_filter', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            initial_soc: initialSoc,
-                            q_max: capacity,  // Changed from capacity_ah
-                            r0: initialR0     // Changed from initial_r0
-                        })
+                        body: JSON.stringify({ initial_soc: initialSoc, q_max: capacity, r0: initialR0 })
                     });
 
                     const data = await response.json();
 
-                    if (data.status === 'success') {  // Changed from response.ok
-                        initStatus.innerText = "Filter Initialized Successfully";
-                        initStatus.style.color = "#ffffff";
+                    if (data.status === 'success') {
+                        initStatus.textContent = 'Filter initialized';
+                        initStatus.className = 'status-msg success';
                         isInitialized = true;
+                        predictBtn.disabled = false;
+                        statusDot.classList.add('active');
+                        statusText.textContent = 'Ready';
 
-                        // Clear chart when reinitializing
-                        history = [];
                         chart.data.labels = [];
                         chart.data.datasets[0].data = [];
                         chart.update();
+
+                        const soc = (initialSoc * 100).toFixed(1);
+                        socDisplay.textContent = soc + '%';
+                        qmaxDisplay.textContent = capacity.toFixed(2) + ' Ah';
+                        r0Display.textContent = initialR0.toFixed(4) + ' Ohm';
+                        updateSocColor(initialSoc * 100);
                     } else {
-                        initStatus.innerText = "Error: " + (data.message || "Unknown error");  // Changed from data.error
-                        initStatus.style.color = "#ff4444";
+                        initStatus.textContent = data.message || 'Initialization failed';
+                        initStatus.className = 'status-msg error';
                     }
                 } catch (error) {
-                    initStatus.innerText = "Network Error";
-                    initStatus.style.color = "#ff4444";
+                    initStatus.textContent = 'Network error';
+                    initStatus.className = 'status-msg error';
                 } finally {
-                    initBtn.innerText = "Initialize Filter";
+                    initBtn.disabled = false;
+                    initBtn.textContent = 'Initialize';
                 }
             });
 
-            // Predict Handler
             predictBtn.addEventListener('click', async () => {
-                if (!isInitialized) {
-                    alert("Please initialize the filter first.");
-                    return;
-                }
+                if (!isInitialized) return;
 
                 const voltage = parseFloat(document.getElementById('voltage').value);
                 const current = parseFloat(document.getElementById('current').value);
                 const temperature = parseFloat(document.getElementById('temperature').value);
 
                 if (isNaN(voltage) || isNaN(current) || isNaN(temperature)) {
-                    alert("Please enter valid numbers for all fields.");
+                    alert('Please enter valid numbers for all fields.');
                     return;
                 }
 
-                predictBtn.innerText = "Estimating...";
-                predictBtn.style.opacity = "0.7";
+                predictBtn.disabled = true;
+                predictBtn.textContent = 'Estimating...';
 
                 try {
                     const response = await fetch('/api/predict_soc', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            voltage: voltage,
-                            current: current,
-                            temperature: temperature
-                        })
+                        body: JSON.stringify({ voltage, current, temperature })
                     });
 
                     const data = await response.json();
 
-                    if (response.ok) {
-                        const soc = data.soc; // 0-1
-                        const socPercent = (soc * 100).toFixed(2);
+                    if (data.status === 'success') {
+                        const socPercent = (data.soc * 100);
+                        socDisplay.textContent = socPercent.toFixed(1) + '%';
+                        qmaxDisplay.textContent = data.q_max.toFixed(2) + ' Ah';
+                        r0Display.textContent = data.r0.toFixed(4) + ' Ohm';
+                        updateSocColor(socPercent);
 
-                        // Update Display
-                        socDisplay.innerText = `${socPercent} %`;
-
-                        // Update Chart
                         const step = chart.data.labels.length + 1;
                         chart.data.labels.push(step);
-                        chart.data.datasets[0].data.push(soc * 100);
+                        chart.data.datasets[0].data.push(socPercent);
                         chart.update();
                     } else {
-                        alert("Error: " + (data.error || "Unknown error"));
+                        alert(data.message || 'Estimation failed');
                     }
-
                 } catch (error) {
                     console.error(error);
-                    alert("Network Error");
+                    alert('Network error');
                 } finally {
-                    predictBtn.innerText = "Add Data Point & Estimate";
-                    predictBtn.style.opacity = "1";
+                    predictBtn.disabled = false;
+                    predictBtn.textContent = 'Estimate SoC';
                 }
             });
 
-            // Know More Toggle Handler
-            const knowMoreBtn = document.getElementById('know-more-btn');
-            const summaryDetails = document.getElementById('summary-details');
+            const infoToggle = document.getElementById('info-toggle');
+            const infoContent = document.getElementById('info-content');
 
-            knowMoreBtn.addEventListener('click', () => {
-                summaryDetails.classList.toggle('expanded');
-
-                if (summaryDetails.classList.contains('expanded')) {
-                    knowMoreBtn.innerText = 'Show Less ▲';
-                } else {
-                    knowMoreBtn.innerText = 'Know More ▼';
-                }
+            infoToggle.addEventListener('click', () => {
+                infoToggle.classList.toggle('expanded');
+                infoContent.classList.toggle('expanded');
             });
         });
     </script>
 </body>
-
 </html>
