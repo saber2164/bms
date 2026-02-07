@@ -1,11 +1,4 @@
----
-title: Battery Management System
-emoji: 🔋
-colorFrom: green
-colorTo: blue
-sdk: docker
-pinned: false
----
+
 
 # Battery SOH & RUL Estimator (BMS)
 
